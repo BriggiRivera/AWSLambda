@@ -23,4 +23,4 @@ def handler(event, context):
         processed_path = '/tmp/{}{}'.format("processed-", key)
         imsave(processed_path, edges)
 
-        s3_client.upload_file(download_path, '{}-transformed'.format(bucket), key)
+        s3_client.upload_file(processed_path, '{}-transformed'.format(bucket), key)
