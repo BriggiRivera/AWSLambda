@@ -7,7 +7,7 @@ import warnings
 # trapz is a public function for scipy.integrate,
 # even though it's actually a numpy function.
 from numpy import trapz
-from scipy.special import roots_legendre
+from scipy.special.orthogonal import p_roots
 from scipy.special import gammaln
 from scipy._lib.six import xrange
 
@@ -19,19 +19,16 @@ class AccuracyWarning(Warning):
     pass
 
 
-def _cached_roots_legendre(n):
+def _cached_p_roots(n):
     """
-    Cache roots_legendre results to speed up calls of the fixed_quad
-    function.
+    Cache p_roots results to speed up calls of the fixed_quad function.
     """
-    if n in _cached_roots_legendre.cache:
-        return _cached_roots_legendre.cache[n]
+    if n in _cached_p_roots.cache:
+        return _cached_p_roots.cache[n]
 
-    _cached_roots_legendre.cache[n] = roots_legendre(n)
-    return _cached_roots_legendre.cache[n]
-
-
-_cached_roots_legendre.cache = dict()
+    _cached_p_roots.cache[n] = p_roots(n)
+    return _cached_p_roots.cache[n]
+_cached_p_roots.cache = dict()
 
 
 def fixed_quad(func, a, b, args=(), n=5):
@@ -45,8 +42,6 @@ def fixed_quad(func, a, b, args=(), n=5):
     ----------
     func : callable
         A Python function or method to integrate (must accept vector inputs).
-        If integrating a vector-valued function, the returned array must have
-        shape ``(..., len(x))``.
     a : float
         Lower limit of integration.
     b : float
@@ -78,13 +73,13 @@ def fixed_quad(func, a, b, args=(), n=5):
     odeint : ODE integrator
 
     """
-    x, w = _cached_roots_legendre(n)
+    x, w = _cached_p_roots(n)
     x = np.real(x)
     if np.isinf(a) or np.isinf(b):
         raise ValueError("Gaussian quadrature is only available for "
                          "finite limits.")
     y = (b-a)*(x+1)/2.0 + a
-    return (b-a)/2.0 * np.sum(w*func(y, *args), axis=-1), None
+    return (b-a)/2.0 * np.sum(w*func(y, *args), axis=0), None
 
 
 def vectorize1(func, args=(), vec_func=False):
@@ -219,12 +214,12 @@ def cumtrapz(y, x=None, dx=1.0, axis=-1, initial=None):
     x : array_like, optional
         The coordinate to integrate along.  If None (default), use spacing `dx`
         between consecutive elements in `y`.
-    dx : float, optional
+    dx : int, optional
         Spacing between elements of `y`.  Only used if `x` is None.
     axis : int, optional
         Specifies the axis to cumulate.  Default is -1 (last axis).
     initial : scalar, optional
-        If given, insert this value at the beginning of the returned result.
+        If given, uses this value as the first value in the returned result.
         Typically this value should be 0.  Default is None, which means no
         value at ``x[0]`` is returned and `res` has one element less than `y`
         along the axis of integration.
@@ -351,7 +346,7 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
         `x` is None. Default is 1.
     axis : int, optional
         Axis along which to integrate. Default is the last axis.
-    even : str {'avg', 'first', 'last'}, optional
+    even : {'avg', 'first', 'str'}, optional
         'avg' : Average two results:1) use the first N-2 intervals with
                   a trapezoidal rule on the last interval and 2) use the last
                   N-2 intervals with a trapezoidal rule on the first interval.
@@ -381,24 +376,6 @@ def simps(y, x=None, dx=1, axis=-1, even='avg'):
     exact if the function is a polynomial of order 3 or less.  If
     the samples are not equally spaced, then the result is exact only
     if the function is a polynomial of order 2 or less.
-
-    Examples
-    --------
-    >>> from scipy import integrate
-    >>> x = np.arange(0, 10)
-    >>> y = np.arange(0, 10)
-
-    >>> integrate.simps(y, x)
-    40.5
-
-    >>> y = np.power(x, 3)
-    >>> integrate.simps(y, x)
-    1642.5
-    >>> integrate.quad(lambda x: x**3, 0, 9)[0]
-    1640.25
-
-    >>> integrate.simps(y, x, even='first')
-    1644.5
 
     """
     y = np.asarray(y)
@@ -491,29 +468,6 @@ def romb(y, dx=1.0, axis=-1, show=False):
     ode : ODE integrators
     odeint : ODE integrators
 
-    Examples
-    --------
-    >>> from scipy import integrate
-    >>> x = np.arange(10, 14.25, 0.25)
-    >>> y = np.arange(3, 12)
-
-    >>> integrate.romb(y)
-    56.0
-
-    >>> y = np.sin(np.power(x, 2.5))
-    >>> integrate.romb(y)
-    -0.742561336672229
-
-    >>> integrate.romb(y, show=True)
-    Richardson Extrapolation Table for Romberg Integration       
-    ====================================================================
-    -0.81576 
-    4.63862  6.45674 
-    -1.10581 -3.02062 -3.65245 
-    -2.57379 -3.06311 -3.06595 -3.05664 
-    -1.34093 -0.92997 -0.78776 -0.75160 -0.74256 
-    ====================================================================
-    -0.742561336672229
     """
     y = np.asarray(y)
     nd = len(y.shape)
@@ -562,7 +516,7 @@ def romb(y, dx=1.0, axis=-1, show=False):
             formstr = "%%%d.%df" % (width, precis)
 
             title = "Richardson Extrapolation Table for Romberg Integration"
-            print("", title.center(68), "=" * 68, sep="\n", end="\n")
+            print("", title.center(68), "=" * 68, sep="\n", end="")
             for i in xrange(k+1):
                 for j in xrange(i+1):
                     print(formstr % R[(i, j)], end=" ")

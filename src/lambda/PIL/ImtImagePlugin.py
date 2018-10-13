@@ -17,7 +17,7 @@
 
 import re
 
-from . import Image, ImageFile
+from PIL import Image, ImageFile
 
 __version__ = "0.2"
 
@@ -78,10 +78,10 @@ class ImtImageFile(ImageFile.ImageFile):
                 k, v = m.group(1, 2)
                 if k == "width":
                     xsize = int(v)
-                    self._size = xsize, ysize
+                    self.size = xsize, ysize
                 elif k == "height":
                     ysize = int(v)
-                    self._size = xsize, ysize
+                    self.size = xsize, ysize
                 elif k == "pixel" and v == "n8":
                     self.mode = "L"
 

@@ -7,6 +7,7 @@ __all__ = ['csc_matrix', 'isspmatrix_csc']
 
 
 import numpy as np
+from scipy._lib.six import xrange
 
 from .base import spmatrix
 from ._sparsetools import csc_tocsr
@@ -123,8 +124,9 @@ class csc_matrix(_cs_matrix, IndexMixin):
     transpose.__doc__ = spmatrix.transpose.__doc__
 
     def __iter__(self):
-        for r in self.tocsr():
-            yield r
+        csr = self.tocsr()
+        for r in xrange(self.shape[0]):
+            yield csr[r,:]
 
     def tocsc(self, copy=False):
         if copy:
@@ -151,7 +153,7 @@ class csc_matrix(_cs_matrix, IndexMixin):
                   data)
 
         from .csr import csr_matrix
-        A = csr_matrix((data, indices, indptr), shape=self.shape, copy=False)
+        A = csr_matrix((data, indices, indptr), shape=self.shape)
         A.has_sorted_indices = True
         return A
 
@@ -206,48 +208,14 @@ class csc_matrix(_cs_matrix, IndexMixin):
         """Returns a copy of column i of the matrix, as a (m x 1)
         CSC matrix (column vector).
         """
-        M, N = self.shape
-        i = int(i)
-        if i < 0:
-            i += N
-        if i < 0 or i >= N:
-            raise IndexError('index (%d) out of range' % i)
-        idx = slice(*self.indptr[i:i+2])
-        data = self.data[idx].copy()
-        indices = self.indices[idx].copy()
-        indptr = np.array([0, len(indices)], dtype=self.indptr.dtype)
-        return csc_matrix((data, indices, indptr), shape=(M, 1),
-                          dtype=self.dtype, copy=False)
+        return self._get_submatrix(slice(None), i)
 
     # these functions are used by the parent class (_cs_matrix)
     # to remove redudancy between csc_matrix and csr_matrix
-    def _swap(self, x):
+    def _swap(self,x):
         """swap the members of x if this is a column-oriented matrix
         """
-        return x[1], x[0]
-
+        return (x[1],x[0])
 
 def isspmatrix_csc(x):
-    """Is x of csc_matrix type?
-
-    Parameters
-    ----------
-    x
-        object to check for being a csc matrix
-
-    Returns
-    -------
-    bool
-        True if x is a csc matrix, False otherwise
-
-    Examples
-    --------
-    >>> from scipy.sparse import csc_matrix, isspmatrix_csc
-    >>> isspmatrix_csc(csc_matrix([[5]]))
-    True
-
-    >>> from scipy.sparse import csc_matrix, csr_matrix, isspmatrix_csc
-    >>> isspmatrix_csc(csr_matrix([[5]]))
-    False
-    """
     return isinstance(x, csc_matrix)

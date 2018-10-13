@@ -123,7 +123,12 @@ def savgol_coeffs(window_length, polyorder, deriv=0, delta=1.0, pos=None,
         x = x[::-1]
 
     order = np.arange(polyorder + 1).reshape(-1, 1)
-    A = x ** order
+    if order.size == 1:
+        # Avoid spurious DeprecationWarning in numpy 1.8.0 for
+        # ``[1] ** [[2]]``, see numpy gh-4145.
+        A = np.atleast_2d(x ** order[0, 0])
+    else:
+        A = x ** order
 
     # y determines which order derivative is returned.
     y = np.zeros(polyorder + 1)
@@ -235,8 +240,7 @@ def savgol_filter(x, window_length, polyorder, deriv=0, delta=1.0,
         before filtering.
     window_length : int
         The length of the filter window (i.e. the number of coefficients).
-        `window_length` must be a positive odd integer. If `mode` is 'interp',
-        `window_length` must be less than or equal to the size of `x`.
+        `window_length` must be a positive odd integer.
     polyorder : int
         The order of the polynomial used to fit the samples.
         `polyorder` must be less than `window_length`.
@@ -333,10 +337,6 @@ def savgol_filter(x, window_length, polyorder, deriv=0, delta=1.0,
     coeffs = savgol_coeffs(window_length, polyorder, deriv=deriv, delta=delta)
 
     if mode == "interp":
-        if window_length > x.size:
-            raise ValueError("If mode is 'interp', window_length must be less "
-                             "than or equal to the size of x.")
-
         # Do not pad.  Instead, for the elements within `window_length // 2`
         # of the ends of the sequence, use the polynomial that is fitted to
         # the last `window_length` elements.

@@ -1,18 +1,18 @@
 from __future__ import division, print_function, absolute_import
 
 import os
+import warnings
 
 from distutils.version import LooseVersion
 
-import functools
-
 import numpy as np
-from numpy.testing import assert_
-import pytest
+from numpy.testing import dec, assert_
+from numpy.testing.noseclasses import KnownFailureTest
 
 import scipy.special as sc
 
-__all__ = ['with_special_errors', 'assert_func_equal', 'FuncData']
+__all__ = ['with_special_errors', 'assert_tol_equal', 'assert_func_equal',
+           'FuncData']
 
 
 #------------------------------------------------------------------------------
@@ -26,9 +26,28 @@ class MissingModule(object):
 
 def check_version(module, min_ver):
     if type(module) == MissingModule:
-        return pytest.mark.skip(reason="{} is not installed".format(module.name))
-    return pytest.mark.skipif(LooseVersion(module.__version__) < LooseVersion(min_ver),
-                              reason="{} version >= {} required".format(module.__name__, min_ver))
+        return dec.skipif(True, "{} is not installed".format(module.name))
+    return dec.skipif(LooseVersion(module.__version__) < LooseVersion(min_ver),
+                      "{} version >= {} required".format(module.__name__, min_ver))
+
+
+#------------------------------------------------------------------------------
+# Metaclass for decorating test_* methods
+#------------------------------------------------------------------------------
+
+class DecoratorMeta(type):
+    """Metaclass which decorates test_* methods given decorators."""
+    def __new__(cls, cls_name, bases, dct):
+        decorators = dct.pop('decorators', [])
+        for name, item in list(dct.items()):
+            if name.startswith('test_'):
+                for deco, decoargs in decorators:
+                    if decoargs is not None:
+                        item = deco(*decoargs)(item)
+                    else:
+                        item = deco(item)
+                dct[name] = item
+        return type.__new__(cls, cls_name, bases, dct)
 
 
 #------------------------------------------------------------------------------
@@ -40,12 +59,32 @@ def with_special_errors(func):
     Enable special function errors (such as underflow, overflow,
     loss of precision, etc.)
     """
-    @functools.wraps(func)
     def wrapper(*a, **kw):
-        with sc.errstate(all='raise'):
-            res = func(*a, **kw)
-        return res
+        old_filters = list(getattr(warnings, 'filters', []))
+        old_errprint = sc.errprint(1)
+        warnings.filterwarnings("error", category=sc.SpecialFunctionWarning)
+        try:
+            return func(*a, **kw)
+        finally:
+            sc.errprint(old_errprint)
+            setattr(warnings, 'filters', old_filters)
+    wrapper.__name__ = func.__name__
+    wrapper.__doc__ = func.__doc__
     return wrapper
+
+
+#------------------------------------------------------------------------------
+# Comparing function values at many data points at once, with helpful
+#------------------------------------------------------------------------------
+
+def assert_tol_equal(a, b, rtol=1e-7, atol=0, err_msg='', verbose=True):
+    """Assert that `a` and `b` are equal to tolerance ``atol + rtol*abs(b)``"""
+    def compare(x, y):
+        return np.allclose(x, y, rtol=rtol, atol=atol)
+    a, b = np.asanyarray(a), np.asanyarray(b)
+    header = 'Not equal to tolerance rtol=%g, atol=%g' % (rtol, atol)
+    np.testing.utils.assert_array_compare(compare, a, b, err_msg=str(err_msg),
+                                          verbose=verbose, header=header)
 
 
 #------------------------------------------------------------------------------
@@ -121,9 +160,9 @@ class FuncData(object):
     ignore_inf_sign : bool, optional
         Whether to ignore signs of infinities.
         (Doesn't matter for complex-valued functions.)
-    distinguish_nan_and_inf : bool, optional
-        If True, treat numbers which contain nans or infs as as
-        equal. Sets ignore_inf_sign to be True.
+    distinguish_nonfinite : bool, optional
+        Whether to distinguish between nans and infinities. If true
+        also ignores the signs of infinities.
 
     """
 
@@ -176,7 +215,7 @@ class FuncData(object):
         """Check the special function against the data."""
 
         if self.knownfailure:
-            pytest.xfail(reason=self.knownfailure)
+            raise KnownFailureTest(self.knownfailure)
 
         if data is None:
             data = self.data

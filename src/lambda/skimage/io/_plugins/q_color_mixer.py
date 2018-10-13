@@ -1,8 +1,6 @@
 # the module for the qt color_mixer plugin
-from qtpy import QtCore
-from qtpy.QtWidgets import (QWidget, QStackedWidget, QSlider, QGridLayout,
-                            QLabel, QFrame, QComboBox, QRadioButton,
-                            QPushButton)
+from PyQt4 import QtGui, QtCore
+from PyQt4.QtGui import (QWidget, QStackedWidget, QSlider, QGridLayout, QLabel)
 
 from .util import ColorMixer
 
@@ -68,7 +66,7 @@ class IntelligentSlider(QWidget):
         return self.slider.value() * self.a + self.b
 
 
-class MixerPanel(QFrame):
+class MixerPanel(QtGui.QFrame):
     '''A color mixer to hook up to an image.
     You pass the image you the panel to operate on
     and it operates on that image in place. You also
@@ -76,8 +74,8 @@ class MixerPanel(QFrame):
     This callback is called every time the mixer modifies
     your image.'''
     def __init__(self, img):
-        QFrame.__init__(self)
-        # self.setFrameStyle(QFrame.Box | QFrame.Sunken)
+        QtGui.QFrame.__init__(self)
+        #self.setFrameStyle(QtGui.QFrame.Box|QtGui.QFrame.Sunken)
 
         self.img = img
         self.mixer = ColorMixer(self.img)
@@ -91,7 +89,7 @@ class MixerPanel(QFrame):
                                   'Brightness/Contrast',
                                   'Gamma',
                                   'Gamma (Sigmoidal)']
-        self.combo_box = QComboBox()
+        self.combo_box = QtGui.QComboBox()
         for entry in self.combo_box_entries:
             self.combo_box.addItem(entry)
         self.combo_box.currentIndexChanged.connect(self.combo_box_changed)
@@ -101,8 +99,8 @@ class MixerPanel(QFrame):
         #---------------------------------------------------------------
 
         # radio buttons
-        self.rgb_add = QRadioButton('Additive')
-        self.rgb_mul = QRadioButton('Multiplicative')
+        self.rgb_add = QtGui.QRadioButton('Additive')
+        self.rgb_mul = QtGui.QRadioButton('Multiplicative')
         self.rgb_mul.toggled.connect(self.rgb_radio_changed)
         self.rgb_add.toggled.connect(self.rgb_radio_changed)
 
@@ -126,8 +124,8 @@ class MixerPanel(QFrame):
         # HSV sliders
         #---------------------------------------------------------------
         # radio buttons
-        self.hsv_add = QRadioButton('Additive')
-        self.hsv_mul = QRadioButton('Multiplicative')
+        self.hsv_add = QtGui.QRadioButton('Additive')
+        self.hsv_mul = QtGui.QRadioButton('Multiplicative')
         self.hsv_mul.toggled.connect(self.hsv_radio_changed)
         self.hsv_mul.toggled.connect(self.hsv_radio_changed)
 
@@ -158,7 +156,7 @@ class MixerPanel(QFrame):
 
         # layout
         self.bright_widget = QWidget()
-        self.bright_widget.layout = QGridLayout(self.bright_widget)
+        self.bright_widget.layout = QtGui.QGridLayout(self.bright_widget)
         self.bright_widget.layout.addWidget(self.cont, 0, 0)
         self.bright_widget.layout.addWidget(self.bright, 0, 1)
 
@@ -170,7 +168,7 @@ class MixerPanel(QFrame):
 
         # layout
         self.gamma_widget = QWidget()
-        self.gamma_widget.layout = QGridLayout(self.gamma_widget)
+        self.gamma_widget.layout = QtGui.QGridLayout(self.gamma_widget)
         self.gamma_widget.layout.addWidget(self.gamma, 0, 0)
 
         #---------------------------------------------------------------
@@ -184,16 +182,16 @@ class MixerPanel(QFrame):
 
         # layout
         self.sig_gamma_widget = QWidget()
-        self.sig_gamma_widget.layout = QGridLayout(self.sig_gamma_widget)
+        self.sig_gamma_widget.layout = QtGui.QGridLayout(self.sig_gamma_widget)
         self.sig_gamma_widget.layout.addWidget(self.a_gamma, 0, 0)
         self.sig_gamma_widget.layout.addWidget(self.b_gamma, 0, 1)
 
         #---------------------------------------------------------------
         # Buttons
         #---------------------------------------------------------------
-        self.commit_button = QPushButton('Commit')
+        self.commit_button = QtGui.QPushButton('Commit')
         self.commit_button.clicked.connect(self.commit_changes)
-        self.revert_button = QPushButton('Revert')
+        self.revert_button = QtGui.QPushButton('Revert')
         self.revert_button.clicked.connect(self.revert_changes)
 
         #---------------------------------------------------------------
@@ -206,7 +204,7 @@ class MixerPanel(QFrame):
         self.sliders.addWidget(self.gamma_widget)
         self.sliders.addWidget(self.sig_gamma_widget)
 
-        self.layout = QGridLayout(self)
+        self.layout = QtGui.QGridLayout(self)
         self.layout.addWidget(self.combo_box, 0, 0)
         self.layout.addWidget(self.sliders, 1, 0)
         self.layout.addWidget(self.commit_button, 2, 0)

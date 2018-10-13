@@ -2,22 +2,20 @@
 """
 from __future__ import division, print_function, absolute_import
 
-import math
-import operator
 import warnings
 
 import numpy
-import numpy as np
-from numpy import (atleast_1d, poly, polyval, roots, real, asarray,
+from numpy import (atleast_1d, poly, polyval, roots, real, asarray, allclose,
                    resize, pi, absolute, logspace, r_, sqrt, tan, log10,
                    arctan, arcsinh, sin, exp, cosh, arccosh, ceil, conjugate,
-                   zeros, sinh, append, concatenate, prod, ones, array,
-                   mintypecode)
+                   zeros, sinh, append, concatenate, prod, ones, array)
+from numpy import mintypecode
+import numpy as np
+from scipy import special, optimize
+from scipy.special import comb
+from scipy.misc import factorial
 from numpy.polynomial.polynomial import polyval as npp_polyval
-
-from scipy import special, optimize, fftpack
-from scipy.special import comb, factorial
-from scipy._lib._numpy_compat import polyvalfromroots
+import math
 
 
 __all__ = ['findfreqs', 'freqs', 'freqz', 'tf2zpk', 'zpk2tf', 'normalize',
@@ -25,21 +23,18 @@ __all__ = ['findfreqs', 'freqs', 'freqz', 'tf2zpk', 'zpk2tf', 'normalize',
            'iirfilter', 'butter', 'cheby1', 'cheby2', 'ellip', 'bessel',
            'band_stop_obj', 'buttord', 'cheb1ord', 'cheb2ord', 'ellipord',
            'buttap', 'cheb1ap', 'cheb2ap', 'ellipap', 'besselap',
-           'BadCoefficients', 'freqs_zpk', 'freqz_zpk',
-           'tf2sos', 'sos2tf', 'zpk2sos', 'sos2zpk', 'group_delay',
-           'sosfreqz', 'iirnotch', 'iirpeak', 'bilinear_zpk',
-           'lp2lp_zpk', 'lp2hp_zpk', 'lp2bp_zpk', 'lp2bs_zpk']
+           'BadCoefficients',
+           'tf2sos', 'sos2tf', 'zpk2sos', 'sos2zpk', 'group_delay']
 
 
 class BadCoefficients(UserWarning):
     """Warning about badly conditioned filter coefficients"""
     pass
 
-
 abs = absolute
 
 
-def findfreqs(num, den, N, kind='ba'):
+def findfreqs(num, den, N):
     """
     Find array of frequencies for computing the response of an analog filter.
 
@@ -47,14 +42,10 @@ def findfreqs(num, den, N, kind='ba'):
     ----------
     num, den : array_like, 1-D
         The polynomial coefficients of the numerator and denominator of the
-        transfer function of the filter or LTI system, where the coefficients
-        are ordered from highest to lowest degree. Or, the roots  of the
-        transfer function numerator and denominator (i.e. zeroes and poles).
+        transfer function of the filter or LTI system.  The coefficients are
+        ordered from highest to lowest degree.
     N : int
         The length of the array to be computed.
-    kind : str {'ba', 'zp'}, optional
-        Specifies whether the numerator and denominator are specified by their
-        polynomial coefficients ('ba'), or their roots ('zp').
 
     Returns
     -------
@@ -74,14 +65,8 @@ def findfreqs(num, den, N, kind='ba'):
              3.16227766e-01,   1.00000000e+00,   3.16227766e+00,
              1.00000000e+01,   3.16227766e+01,   1.00000000e+02])
     """
-    if kind == 'ba':
-        ep = atleast_1d(roots(den)) + 0j
-        tz = atleast_1d(roots(num)) + 0j
-    elif kind == 'zp':
-        ep = atleast_1d(den) + 0j
-        tz = atleast_1d(num) + 0j
-    else:
-        raise ValueError("input must be one of {'ba', 'zp'}")
+    ep = atleast_1d(roots(den)) + 0j
+    tz = atleast_1d(roots(num)) + 0j
 
     if len(ep) == 0:
         ep = atleast_1d(-1000) + 0j
@@ -100,7 +85,7 @@ def findfreqs(num, den, N, kind='ba'):
     return w
 
 
-def freqs(b, a, worN=200, plot=None):
+def freqs(b, a, worN=None, plot=None):
     """
     Compute frequency response of analog filter.
 
@@ -176,119 +161,29 @@ def freqs(b, a, worN=200, plot=None):
     return w, h
 
 
-def freqs_zpk(z, p, k, worN=200):
-    """
-    Compute frequency response of analog filter.
-
-    Given the zeros `z`, poles `p`, and gain `k` of a filter, compute its
-    frequency response::
-
-                (jw-z[0]) * (jw-z[1]) * ... * (jw-z[-1])
-     H(w) = k * ----------------------------------------
-                (jw-p[0]) * (jw-p[1]) * ... * (jw-p[-1])
-
-    Parameters
-    ----------
-    z : array_like
-        Zeroes of a linear filter
-    p : array_like
-        Poles of a linear filter
-    k : scalar
-        Gain of a linear filter
-    worN : {None, int, array_like}, optional
-        If None, then compute at 200 frequencies around the interesting parts
-        of the response curve (determined by pole-zero locations).  If a single
-        integer, then compute at that many frequencies.  Otherwise, compute the
-        response at the angular frequencies (e.g. rad/s) given in `worN`.
-
-    Returns
-    -------
-    w : ndarray
-        The angular frequencies at which `h` was computed.
-    h : ndarray
-        The frequency response.
-
-    See Also
-    --------
-    freqs : Compute the frequency response of an analog filter in TF form
-    freqz : Compute the frequency response of a digital filter in TF form
-    freqz_zpk : Compute the frequency response of a digital filter in ZPK form
-
-    Notes
-    -----
-    .. versionadded:: 0.19.0
-
-    Examples
-    --------
-    >>> from scipy.signal import freqs_zpk, iirfilter
-
-    >>> z, p, k = iirfilter(4, [1, 10], 1, 60, analog=True, ftype='cheby1',
-    ...                     output='zpk')
-
-    >>> w, h = freqs_zpk(z, p, k, worN=np.logspace(-1, 2, 1000))
-
-    >>> import matplotlib.pyplot as plt
-    >>> plt.semilogx(w, 20 * np.log10(abs(h)))
-    >>> plt.xlabel('Frequency')
-    >>> plt.ylabel('Amplitude response [dB]')
-    >>> plt.grid()
-    >>> plt.show()
-
-    """
-    k = np.asarray(k)
-    if k.size > 1:
-        raise ValueError('k must be a single scalar gain')
-
-    if worN is None:
-        w = findfreqs(z, p, 200, kind='zp')
-    elif isinstance(worN, int):
-        N = worN
-        w = findfreqs(z, p, N, kind='zp')
-    else:
-        w = worN
-
-    w = atleast_1d(w)
-    s = 1j * w
-    num = polyvalfromroots(s, z)
-    den = polyvalfromroots(s, p)
-    h = k * num/den
-    return w, h
-
-
-def freqz(b, a=1, worN=512, whole=False, plot=None):
+def freqz(b, a=1, worN=None, whole=False, plot=None):
     """
     Compute the frequency response of a digital filter.
 
     Given the M-order numerator `b` and N-order denominator `a` of a digital
     filter, compute its frequency response::
 
-                 jw                 -jw              -jwM
-        jw    B(e  )    b[0] + b[1]e    + ... + b[M]e
-     H(e  ) = ------ = -----------------------------------
-                 jw                 -jw              -jwN
-              A(e  )    a[0] + a[1]e    + ... + a[N]e
+                 jw               -jw               -jwM
+        jw    B(e  )  b[0] + b[1]e    + .... + b[M]e
+     H(e  ) = ---- = -----------------------------------
+                 jw               -jw               -jwN
+              A(e  )  a[0] + a[1]e    + .... + a[N]e
 
     Parameters
     ----------
     b : array_like
-        Numerator of a linear filter.  If `b` has dimension greater than 1,
-        it is assumed that the coefficients are stored in the first dimension,
-        and ``b.shape[1:]``, ``a.shape[1:]``, and the shape of the frequencies
-        array must be compatible for broadcasting.
+        numerator of a linear filter
     a : array_like
-        Denominator of a linear filter.  If `b` has dimension greater than 1,
-        it is assumed that the coefficients are stored in the first dimension,
-        and ``b.shape[1:]``, ``a.shape[1:]``, and the shape of the frequencies
-        array must be compatible for broadcasting.
+        denominator of a linear filter
     worN : {None, int, array_like}, optional
-        If None, then compute at 512 equally spaced frequencies.
-        If a single integer, then compute at that many frequencies.  This is
-        a convenient alternative to::
-
-            np.linspace(0, 2*pi if whole else pi, N, endpoint=False)
-
-        Using a number that is fast for FFT computations can result in
-        faster computations (see Notes).
+        If None (default), then compute at 512 frequencies equally spaced
+        around the unit circle.
+        If a single integer, then compute at that many frequencies.
         If an array_like, compute the response at the frequencies given (in
         radians/sample).
     whole : bool, optional
@@ -306,33 +201,13 @@ def freqz(b, a=1, worN=512, whole=False, plot=None):
         The normalized frequencies at which `h` was computed, in
         radians/sample.
     h : ndarray
-        The frequency response, as complex numbers.
-
-    See Also
-    --------
-    freqz_zpk
-    sosfreqz
+        The frequency response.
 
     Notes
     -----
-    Using Matplotlib's :func:`matplotlib.pyplot.plot` function as the callable
-    for `plot` produces unexpected results, as this plots the real part of the
-    complex transfer function, not the magnitude.
-    Try ``lambda w, h: plot(w, np.abs(h))``.
-
-    A direct computation via (R)FFT is used to compute the frequency response
-    when the following conditions are met:
-
-    1. An integer value is given for `worN`.
-    2. `worN` is fast to compute via FFT (i.e.,
-       `next_fast_len(worN) <scipy.fftpack.next_fast_len>` equals `worN`).
-    3. The denominator coefficients are a single value (``a.shape[0] == 1``).
-    4. `worN` is at least as long as the numerator coefficients
-       (``worN >= b.shape[0]``).
-    5. If ``b.ndim > 1``, then ``b.shape[-1] == 1``.
-
-    For long FIR filters, the FFT approach can have lower error and be much
-    faster than the equivalent direct polynomial calculation.
+    Using Matplotlib's "plot" function as the callable for `plot` produces
+    unexpected results,  this plots the real part of the complex transfer
+    function, not the magnitude.  Try ``lambda w, h: plot(w, abs(h))``.
 
     Examples
     --------
@@ -357,190 +232,30 @@ def freqz(b, a=1, worN=512, whole=False, plot=None):
     >>> plt.axis('tight')
     >>> plt.show()
 
-    Broadcasting Examples
-
-    Suppose we have two FIR filters whose coefficients are stored in the
-    rows of an array with shape (2, 25).  For this demonstration we'll
-    use random data:
-
-    >>> np.random.seed(42)
-    >>> b = np.random.rand(2, 25)
-
-    To compute the frequency response for these two filters with one call
-    to `freqz`, we must pass in ``b.T``, because `freqz` expects the first
-    axis to hold the coefficients. We must then extend the shape with a
-    trivial dimension of length 1 to allow broadcasting with the array
-    of frequencies.  That is, we pass in ``b.T[..., np.newaxis]``, which has
-    shape (25, 2, 1):
-
-    >>> w, h = signal.freqz(b.T[..., np.newaxis], worN=1024)
-    >>> w.shape
-    (1024,)
-    >>> h.shape
-    (2, 1024)
-
-    Now suppose we have two transfer functions, with the same numerator
-    coefficients ``b = [0.5, 0.5]``. The coefficients for the two denominators
-    are stored in the first dimension of the two-dimensional array  `a`::
-
-        a = [   1      1  ]
-            [ -0.25, -0.5 ]
-
-    >>> b = np.array([0.5, 0.5])
-    >>> a = np.array([[1, 1], [-0.25, -0.5]])
-
-    Only `a` is more than one-dimensional.  To make it compatible for
-    broadcasting with the frequencies, we extend it with a trivial dimension
-    in the call to `freqz`:
-
-    >>> w, h = signal.freqz(b, a[..., np.newaxis], worN=1024)
-    >>> w.shape
-    (1024,)
-    >>> h.shape
-    (2, 1024)
-
     """
-    b = atleast_1d(b)
-    a = atleast_1d(a)
-
-    if worN is None:
-        worN = 512
-
-    h = None
-    try:
-        worN = operator.index(worN)
-    except TypeError:  # not int-like
-        w = atleast_1d(worN)
-    else:
-        if worN < 0:
-            raise ValueError('worN must be nonnegative, got %s' % (worN,))
-        lastpoint = 2 * pi if whole else pi
-        w = np.linspace(0, lastpoint, worN, endpoint=False)
-        if (a.size == 1 and worN >= b.shape[0] and
-                fftpack.next_fast_len(worN) == worN and
-                (b.ndim == 1 or (b.shape[-1] == 1))):
-            # if worN is fast, 2 * worN will be fast, too, so no need to check
-            n_fft = worN if whole else worN * 2
-            if np.isrealobj(b) and np.isrealobj(a):
-                fft_func = np.fft.rfft
-            else:
-                fft_func = fftpack.fft
-            h = fft_func(b, n=n_fft, axis=0)[:worN]
-            h /= a
-            if fft_func is np.fft.rfft and whole:
-                # exclude DC and maybe Nyquist (no need to use axis_reverse
-                # here because we can build reversal with the truncation)
-                stop = -1 if n_fft % 2 == 1 else -2
-                h_flip = slice(stop, 0, -1)
-                h = np.concatenate((h, h[h_flip].conj()))
-            if b.ndim > 1:
-                # Last axis of h has length 1, so drop it.
-                h = h[..., 0]
-                # Rotate the first axis of h to the end.
-                h = np.rollaxis(h, 0, h.ndim)
-    del worN
-
-    if h is None:  # still need to compute using freqs w
-        zm1 = exp(-1j * w)
-        h = (npp_polyval(zm1, b, tensor=False) /
-             npp_polyval(zm1, a, tensor=False))
-    if plot is not None:
-        plot(w, h)
-
-    return w, h
-
-
-def freqz_zpk(z, p, k, worN=512, whole=False):
-    r"""
-    Compute the frequency response of a digital filter in ZPK form.
-
-    Given the Zeros, Poles and Gain of a digital filter, compute its frequency
-    response::
-
-    :math:`H(z)=k \prod_i (z - Z[i]) / \prod_j (z - P[j])`
-
-    where :math:`k` is the `gain`, :math:`Z` are the `zeros` and :math:`P` are
-    the `poles`.
-
-    Parameters
-    ----------
-    z : array_like
-        Zeroes of a linear filter
-    p : array_like
-        Poles of a linear filter
-    k : scalar
-        Gain of a linear filter
-    worN : {None, int, array_like}, optional
-        If single integer (default 512, same as None), then compute at `worN`
-        frequencies equally spaced around the unit circle. If an array_like,
-        compute the response at the frequencies given (in radians/sample).
-    whole : bool, optional
-        Normally, frequencies are computed from 0 to the Nyquist frequency,
-        pi radians/sample (upper-half of unit-circle).  If `whole` is True,
-        compute frequencies from 0 to 2*pi radians/sample.
-
-    Returns
-    -------
-    w : ndarray
-        The normalized frequencies at which `h` was computed, in
-        radians/sample.
-    h : ndarray
-        The frequency response.
-
-    See Also
-    --------
-    freqs : Compute the frequency response of an analog filter in TF form
-    freqs_zpk : Compute the frequency response of an analog filter in ZPK form
-    freqz : Compute the frequency response of a digital filter in TF form
-
-    Notes
-    -----
-    .. versionadded:: 0.19.0
-
-    Examples
-    --------
-    >>> from scipy import signal
-    >>> z, p, k = signal.butter(4, 0.2, output='zpk')
-    >>> w, h = signal.freqz_zpk(z, p, k)
-
-    >>> import matplotlib.pyplot as plt
-    >>> fig = plt.figure()
-    >>> plt.title('Digital filter frequency response')
-    >>> ax1 = fig.add_subplot(111)
-
-    >>> plt.plot(w, 20 * np.log10(abs(h)), 'b')
-    >>> plt.ylabel('Amplitude [dB]', color='b')
-    >>> plt.xlabel('Frequency [rad/sample]')
-
-    >>> ax2 = ax1.twinx()
-    >>> angles = np.unwrap(np.angle(h))
-    >>> plt.plot(w, angles, 'g')
-    >>> plt.ylabel('Angle (radians)', color='g')
-    >>> plt.grid()
-    >>> plt.axis('tight')
-    >>> plt.show()
-
-    """
-    z, p = map(atleast_1d, (z, p))
+    b, a = map(atleast_1d, (b, a))
     if whole:
         lastpoint = 2 * pi
     else:
         lastpoint = pi
     if worN is None:
-        w = numpy.linspace(0, lastpoint, 512, endpoint=False)
+        N = 512
+        w = numpy.linspace(0, lastpoint, N, endpoint=False)
     elif isinstance(worN, int):
         N = worN
         w = numpy.linspace(0, lastpoint, N, endpoint=False)
     else:
         w = worN
     w = atleast_1d(w)
-    zm1 = exp(1j * w)
-    h = k * polyvalfromroots(zm1, z) / polyvalfromroots(zm1, p)
+    zm1 = exp(-1j * w)
+    h = polyval(b[::-1], zm1) / polyval(a[::-1], zm1)
+    if plot is not None:
+        plot(w, h)
 
     return w, h
 
 
-def group_delay(system, w=512, whole=False):
+def group_delay(system, w=None, whole=False):
     r"""Compute the group delay of a digital filter.
 
     The group delay measures by how many samples amplitude envelopes of
@@ -556,7 +271,7 @@ def group_delay(system, w=512, whole=False):
     system : tuple of array_like (b, a)
         Numerator and denominator coefficients of a filter transfer function.
     w : {None, int, array-like}, optional
-        If None, then compute at 512 frequencies equally spaced
+        If None (default), then compute at 512 frequencies equally spaced
         around the unit circle.
         If a single integer, then compute at that many frequencies.
         If array, compute the delay at the frequencies given
@@ -585,7 +300,7 @@ def group_delay(system, w=512, whole=False):
 
     For the details of numerical computation of the group delay refer to [1]_.
 
-    .. versionadded:: 0.16.0
+    .. versionadded: 0.16.0
 
     See Also
     --------
@@ -638,128 +353,6 @@ def group_delay(system, w=512, whole=False):
     return w, gd
 
 
-def _validate_sos(sos):
-    """Helper to validate a SOS input"""
-    sos = np.atleast_2d(sos)
-    if sos.ndim != 2:
-        raise ValueError('sos array must be 2D')
-    n_sections, m = sos.shape
-    if m != 6:
-        raise ValueError('sos array must be shape (n_sections, 6)')
-    if not (sos[:, 3] == 1).all():
-        raise ValueError('sos[:, 3] should be all ones')
-    return sos, n_sections
-
-
-def sosfreqz(sos, worN=None, whole=False):
-    """
-    Compute the frequency response of a digital filter in SOS format.
-
-    Given `sos`, an array with shape (n, 6) of second order sections of
-    a digital filter, compute the frequency response of the system function::
-
-               B0(z)   B1(z)         B{n-1}(z)
-        H(z) = ----- * ----- * ... * ---------
-               A0(z)   A1(z)         A{n-1}(z)
-
-    for z = exp(omega*1j), where B{k}(z) and A{k}(z) are numerator and
-    denominator of the transfer function of the k-th second order section.
-
-    Parameters
-    ----------
-    sos : array_like
-        Array of second-order filter coefficients, must have shape
-        ``(n_sections, 6)``. Each row corresponds to a second-order
-        section, with the first three columns providing the numerator
-        coefficients and the last three providing the denominator
-        coefficients.
-    worN : {None, int, array_like}, optional
-        If None (default), then compute at 512 frequencies equally spaced
-        around the unit circle.
-        If a single integer, then compute at that many frequencies.
-        Using a number that is fast for FFT computations can result in
-        faster computations (see Notes of `freqz`).
-        If an array_like, compute the response at the frequencies given (in
-        radians/sample; must be 1D).
-    whole : bool, optional
-        Normally, frequencies are computed from 0 to the Nyquist frequency,
-        pi radians/sample (upper-half of unit-circle).  If `whole` is True,
-        compute frequencies from 0 to 2*pi radians/sample.
-
-    Returns
-    -------
-    w : ndarray
-        The normalized frequencies at which `h` was computed, in
-        radians/sample.
-    h : ndarray
-        The frequency response, as complex numbers.
-
-    See Also
-    --------
-    freqz, sosfilt
-
-    Notes
-    -----
-
-    .. versionadded:: 0.19.0
-
-    Examples
-    --------
-    Design a 15th-order bandpass filter in SOS format.
-
-    >>> from scipy import signal
-    >>> sos = signal.ellip(15, 0.5, 60, (0.2, 0.4), btype='bandpass',
-    ...                    output='sos')
-
-    Compute the frequency response at 1500 points from DC to Nyquist.
-
-    >>> w, h = signal.sosfreqz(sos, worN=1500)
-
-    Plot the response.
-
-    >>> import matplotlib.pyplot as plt
-    >>> plt.subplot(2, 1, 1)
-    >>> db = 20*np.log10(np.abs(h))
-    >>> plt.plot(w/np.pi, db)
-    >>> plt.ylim(-75, 5)
-    >>> plt.grid(True)
-    >>> plt.yticks([0, -20, -40, -60])
-    >>> plt.ylabel('Gain [dB]')
-    >>> plt.title('Frequency Response')
-    >>> plt.subplot(2, 1, 2)
-    >>> plt.plot(w/np.pi, np.angle(h))
-    >>> plt.grid(True)
-    >>> plt.yticks([-np.pi, -0.5*np.pi, 0, 0.5*np.pi, np.pi],
-    ...            [r'$-\\pi$', r'$-\\pi/2$', '0', r'$\\pi/2$', r'$\\pi$'])
-    >>> plt.ylabel('Phase [rad]')
-    >>> plt.xlabel('Normalized frequency (1.0 = Nyquist)')
-    >>> plt.show()
-
-    If the same filter is implemented as a single transfer function,
-    numerical error corrupts the frequency response:
-
-    >>> b, a = signal.ellip(15, 0.5, 60, (0.2, 0.4), btype='bandpass',
-    ...                    output='ba')
-    >>> w, h = signal.freqz(b, a, worN=1500)
-    >>> plt.subplot(2, 1, 1)
-    >>> db = 20*np.log10(np.abs(h))
-    >>> plt.plot(w/np.pi, db)
-    >>> plt.subplot(2, 1, 2)
-    >>> plt.plot(w/np.pi, np.angle(h))
-    >>> plt.show()
-
-    """
-
-    sos, n_sections = _validate_sos(sos)
-    if n_sections == 0:
-        raise ValueError('Cannot compute frequencies with no sections')
-    h = 1.
-    for row in sos:
-        w, rowh = freqz(row[:3], row[3:], worN=worN, whole=whole)
-        h *= rowh
-    return w, h
-
-
 def _cplxreal(z, tol=None):
     """
     Split into complex and real parts, combining conjugate pairs.
@@ -804,9 +397,9 @@ def _cplxreal(z, tol=None):
     --------
     >>> a = [4, 3, 1, 2-2j, 2+2j, 2-1j, 2+1j, 2-1j, 2+1j, 1+1j, 1-1j]
     >>> zc, zr = _cplxreal(a)
-    >>> print(zc)
+    >>> print zc
     [ 1.+1.j  2.+1.j  2.+1.j  2.+2.j]
-    >>> print(zr)
+    >>> print zr
     [ 1.  3.  4.]
     """
 
@@ -1217,7 +810,7 @@ def zpk2sos(z, p, k, pairing='nearest'):
     *Algorithms*
 
     The current algorithms are designed specifically for use with digital
-    filters. (The output coefficients are not correct for analog filters.)
+    filters. (The output coefficents are not correct for analog filters.)
 
     The steps in the ``pairing='nearest'`` and ``pairing='keep_odd'``
     algorithms are mostly shared. The ``nearest`` algorithm attempts to
@@ -1445,25 +1038,12 @@ def zpk2sos(z, p, k, pairing='nearest'):
 
 
 def _align_nums(nums):
-    """Aligns the shapes of multiple numerators.
-
+    """
     Given an array of numerator coefficient arrays [[a_1, a_2,...,
     a_n],..., [b_1, b_2,..., b_m]], this function pads shorter numerator
     arrays with zero's so that all numerators have the same length. Such
     alignment is necessary for functions like 'tf2ss', which needs the
     alignment when dealing with SIMO transfer functions.
-
-    Parameters
-    ----------
-    nums: array_like
-        Numerator or list of numerators. Not necessarily with same length.
-
-    Returns
-    -------
-    nums: array
-        The numerator. If `nums` input was a list of numerators then a 2d
-        array with padded zeros for shorter numerators is returned. Otherwise
-        returns ``np.asarray(nums)``.
     """
     try:
         # The statement can throw a ValueError if one
@@ -1477,88 +1057,44 @@ def _align_nums(nums):
         return nums
 
     except ValueError:
-        nums = [np.atleast_1d(num) for num in nums]
-        max_width = max(num.size for num in nums)
+        nums = list(nums)
+        maxwidth = len(max(nums, key=lambda num: atleast_1d(num).size))
 
-        # pre-allocate
-        aligned_nums = np.zeros((len(nums), max_width))
-
-        # Create numerators with padded zeros
         for index, num in enumerate(nums):
-            aligned_nums[index, -num.size:] = num
+            num = atleast_1d(num).tolist()
+            nums[index] = [0] * (maxwidth - len(num)) + num
 
-        return aligned_nums
+        return atleast_1d(nums)
 
 
 def normalize(b, a):
-    """Normalize numerator/denominator of a continuous-time transfer function.
+    """Normalize polynomial representation of a transfer function.
 
     If values of `b` are too close to 0, they are removed. In that case, a
     BadCoefficients warning is emitted.
 
-    Parameters
-    ----------
-    b: array_like
-        Numerator of the transfer function. Can be a 2d array to normalize
-        multiple transfer functions.
-    a: array_like
-        Denominator of the transfer function. At most 1d.
-
-    Returns
-    -------
-    num: array
-        The numerator of the normalized transfer function. At least a 1d
-        array. A 2d-array if the input `num` is a 2d array.
-    den: 1d-array
-        The denominator of the normalized transfer function.
-
-    Notes
-    -----
-    Coefficients for both the numerator and denominator should be specified in
-    descending exponent order (e.g., ``s^2 + 3s + 5`` would be represented as
-    ``[1, 3, 5]``).
     """
-    num, den = b, a
-
-    den = np.atleast_1d(den)
-    num = np.atleast_2d(_align_nums(num))
-
-    if den.ndim != 1:
+    b = _align_nums(b)
+    b, a = map(atleast_1d, (b, a))
+    if len(a.shape) != 1:
         raise ValueError("Denominator polynomial must be rank-1 array.")
-    if num.ndim > 2:
+    if len(b.shape) > 2:
         raise ValueError("Numerator polynomial must be rank-1 or"
                          " rank-2 array.")
-    if np.all(den == 0):
-        raise ValueError("Denominator must have at least on nonzero element.")
-
-    # Trim leading zeros in denominator, leave at least one.
-    den = np.trim_zeros(den, 'f')
-
-    # Normalize transfer function
-    num, den = num / den[0], den / den[0]
-
-    # Count numerator columns that are all zero
-    leading_zeros = 0
-    for col in num.T:
-        if np.allclose(col, 0, atol=1e-14):
-            leading_zeros += 1
-        else:
-            break
-
-    # Trim leading zeros of numerator
-    if leading_zeros > 0:
+    if len(b.shape) == 1:
+        b = asarray([b], b.dtype.char)
+    while a[0] == 0.0 and len(a) > 1:
+        a = a[1:]
+    outb = b * (1.0) / a[0]
+    outa = a * (1.0) / a[0]
+    if allclose(0, outb[:, 0], atol=1e-14):
         warnings.warn("Badly conditioned filter coefficients (numerator): the "
                       "results may be meaningless", BadCoefficients)
-        # Make sure at least one column remains
-        if leading_zeros == num.shape[1]:
-            leading_zeros -= 1
-        num = num[:, leading_zeros:]
-
-    # Squeeze first dimension if singular
-    if num.shape[0] == 1:
-        num = num[0, :]
-
-    return num, den
+        while allclose(0, outb[:, 0], atol=1e-14) and (outb.shape[-1] > 1):
+            outb = outb[:, 1:]
+    if outb.shape[0] == 1:
+        outb = outb[0]
+    return outb, outa
 
 
 def lp2lp(b, a, wo=1.0):
@@ -1568,11 +1104,6 @@ def lp2lp(b, a, wo=1.0):
     Return an analog low-pass filter with cutoff frequency `wo`
     from an analog low-pass filter prototype with unity cutoff frequency, in
     transfer function ('ba') representation.
-
-    See Also
-    --------
-    lp2hp, lp2bp, lp2bs, bilinear
-    lp2lp_zpk
 
     """
     a, b = map(atleast_1d, (a, b))
@@ -1598,11 +1129,6 @@ def lp2hp(b, a, wo=1.0):
     Return an analog high-pass filter with cutoff frequency `wo`
     from an analog low-pass filter prototype with unity cutoff frequency, in
     transfer function ('ba') representation.
-
-    See Also
-    --------
-    lp2lp, lp2bp, lp2bs, bilinear
-    lp2hp_zpk
 
     """
     a, b = map(atleast_1d, (a, b))
@@ -1637,11 +1163,6 @@ def lp2bp(b, a, wo=1.0, bw=1.0):
     Return an analog band-pass filter with center frequency `wo` and
     bandwidth `bw` from an analog low-pass filter prototype with unity
     cutoff frequency, in transfer function ('ba') representation.
-
-    See Also
-    --------
-    lp2lp, lp2hp, lp2bs, bilinear
-    lp2bp_zpk
 
     """
     a, b = map(atleast_1d, (a, b))
@@ -1680,11 +1201,6 @@ def lp2bs(b, a, wo=1.0, bw=1.0):
     bandwidth `bw` from an analog low-pass filter prototype with unity
     cutoff frequency, in transfer function ('ba') representation.
 
-    See Also
-    --------
-    lp2lp, lp2hp, lp2bp, bilinear
-    lp2bs_zpk
-
     """
     a, b = map(atleast_1d, (a, b))
     D = len(a) - 1
@@ -1720,12 +1236,6 @@ def bilinear(b, a, fs=1.0):
     """Return a digital filter from an analog one using a bilinear transform.
 
     The bilinear transform substitutes ``(z-1) / (z+1)`` for ``s``.
-
-    See Also
-    --------
-    lp2lp, lp2hp, lp2bp, lp2bs
-    bilinear_zpk
-
     """
     fs = float(fs)
     a, b = map(atleast_1d, (a, b))
@@ -1983,9 +1493,9 @@ def iirfilter(N, Wn, rp=None, rs=None, btype='band', analog=False,
 
     # Pre-warp frequencies for digital filter design
     if not analog:
-        if numpy.any(Wn <= 0) or numpy.any(Wn >= 1):
+        if numpy.any(Wn < 0) or numpy.any(Wn > 1):
             raise ValueError("Digital filter critical frequencies "
-                             "must be 0 < Wn < 1")
+                             "must be 0 <= Wn <= 1")
         fs = 2.0
         warped = 2 * fs * tan(pi * Wn / fs)
     else:
@@ -1997,9 +1507,9 @@ def iirfilter(N, Wn, rp=None, rs=None, btype='band', analog=False,
             raise ValueError('Must specify a single critical frequency Wn')
 
         if btype == 'lowpass':
-            z, p, k = lp2lp_zpk(z, p, k, wo=warped)
+            z, p, k = _zpklp2lp(z, p, k, wo=warped)
         elif btype == 'highpass':
-            z, p, k = lp2hp_zpk(z, p, k, wo=warped)
+            z, p, k = _zpklp2hp(z, p, k, wo=warped)
     elif btype in ('bandpass', 'bandstop'):
         try:
             bw = warped[1] - warped[0]
@@ -2008,15 +1518,15 @@ def iirfilter(N, Wn, rp=None, rs=None, btype='band', analog=False,
             raise ValueError('Wn must specify start and stop frequencies')
 
         if btype == 'bandpass':
-            z, p, k = lp2bp_zpk(z, p, k, wo=wo, bw=bw)
+            z, p, k = _zpklp2bp(z, p, k, wo=wo, bw=bw)
         elif btype == 'bandstop':
-            z, p, k = lp2bs_zpk(z, p, k, wo=wo, bw=bw)
+            z, p, k = _zpklp2bs(z, p, k, wo=wo, bw=bw)
     else:
         raise NotImplementedError("'%s' not implemented in iirfilter." % btype)
 
     # Find discrete equivalent if necessary
     if not analog:
-        z, p, k = bilinear_zpk(z, p, k, fs=fs)
+        z, p, k = _zpkbilinear(z, p, k, fs=fs)
 
     # Transform to proper out type (pole-zero, state-space, numer-denom)
     if output == 'zpk':
@@ -2039,9 +1549,11 @@ def _relative_degree(z, p):
         return degree
 
 
-def bilinear_zpk(z, p, k, fs):
+# TODO: merge these into existing functions or make public versions
+
+def _zpkbilinear(z, p, k, fs):
     """
-    Return a digital IIR filter from an analog one using a bilinear transform.
+    Return a digital filter from an analog one using a bilinear transform.
 
     Transform a set of poles and zeros from the analog s-plane to the digital
     z-plane using Tustin's method, which substitutes ``(z-1) / (z+1)`` for
@@ -2050,11 +1562,11 @@ def bilinear_zpk(z, p, k, fs):
     Parameters
     ----------
     z : array_like
-        Zeros of the analog filter transfer function.
+        Zeros of the analog IIR filter transfer function.
     p : array_like
-        Poles of the analog filter transfer function.
+        Poles of the analog IIR filter transfer function.
     k : float
-        System gain of the analog filter transfer function.
+        System gain of the analog IIR filter transfer function.
     fs : float
         Sample rate, as ordinary frequency (e.g. hertz). No prewarping is
         done in this function.
@@ -2068,22 +1580,13 @@ def bilinear_zpk(z, p, k, fs):
     k : float
         System gain of the transformed digital filter.
 
-    See Also
-    --------
-    lp2lp_zpk, lp2hp_zpk, lp2bp_zpk, lp2bs_zpk
-    bilinear
-
-    Notes
-    -----
-    .. versionadded:: 1.1.0
-
     """
     z = atleast_1d(z)
     p = atleast_1d(p)
 
     degree = _relative_degree(z, p)
 
-    fs2 = 2.0*fs
+    fs2 = 2*fs
 
     # Bilinear transform the poles and zeros
     z_z = (fs2 + z) / (fs2 - z)
@@ -2098,7 +1601,7 @@ def bilinear_zpk(z, p, k, fs):
     return z_z, p_z, k_z
 
 
-def lp2lp_zpk(z, p, k, wo=1.0):
+def _zpklp2lp(z, p, k, wo=1.0):
     r"""
     Transform a lowpass filter prototype to a different frequency.
 
@@ -2109,11 +1612,11 @@ def lp2lp_zpk(z, p, k, wo=1.0):
     Parameters
     ----------
     z : array_like
-        Zeros of the analog filter transfer function.
+        Zeros of the analog IIR filter transfer function.
     p : array_like
-        Poles of the analog filter transfer function.
+        Poles of the analog IIR filter transfer function.
     k : float
-        System gain of the analog filter transfer function.
+        System gain of the analog IIR filter transfer function.
     wo : float
         Desired cutoff, as angular frequency (e.g. rad/s).
         Defaults to no change.
@@ -2127,18 +1630,11 @@ def lp2lp_zpk(z, p, k, wo=1.0):
     k : float
         System gain of the transformed low-pass filter.
 
-    See Also
-    --------
-    lp2hp_zpk, lp2bp_zpk, lp2bs_zpk, bilinear
-    lp2lp
-
     Notes
     -----
     This is derived from the s-plane substitution
 
     .. math:: s \rightarrow \frac{s}{\omega_0}
-
-    .. versionadded:: 1.1.0
 
     """
     z = atleast_1d(z)
@@ -2158,7 +1654,7 @@ def lp2lp_zpk(z, p, k, wo=1.0):
     return z_lp, p_lp, k_lp
 
 
-def lp2hp_zpk(z, p, k, wo=1.0):
+def _zpklp2hp(z, p, k, wo=1.0):
     r"""
     Transform a lowpass filter prototype to a highpass filter.
 
@@ -2169,11 +1665,11 @@ def lp2hp_zpk(z, p, k, wo=1.0):
     Parameters
     ----------
     z : array_like
-        Zeros of the analog filter transfer function.
+        Zeros of the analog IIR filter transfer function.
     p : array_like
-        Poles of the analog filter transfer function.
+        Poles of the analog IIR filter transfer function.
     k : float
-        System gain of the analog filter transfer function.
+        System gain of the analog IIR filter transfer function.
     wo : float
         Desired cutoff, as angular frequency (e.g. rad/s).
         Defaults to no change.
@@ -2187,11 +1683,6 @@ def lp2hp_zpk(z, p, k, wo=1.0):
     k : float
         System gain of the transformed high-pass filter.
 
-    See Also
-    --------
-    lp2lp_zpk, lp2bp_zpk, lp2bs_zpk, bilinear
-    lp2hp
-
     Notes
     -----
     This is derived from the s-plane substitution
@@ -2200,8 +1691,6 @@ def lp2hp_zpk(z, p, k, wo=1.0):
 
     This maintains symmetry of the lowpass and highpass responses on a
     logarithmic scale.
-
-    .. versionadded:: 1.1.0
 
     """
     z = atleast_1d(z)
@@ -2224,7 +1713,7 @@ def lp2hp_zpk(z, p, k, wo=1.0):
     return z_hp, p_hp, k_hp
 
 
-def lp2bp_zpk(z, p, k, wo=1.0, bw=1.0):
+def _zpklp2bp(z, p, k, wo=1.0, bw=1.0):
     r"""
     Transform a lowpass filter prototype to a bandpass filter.
 
@@ -2235,11 +1724,11 @@ def lp2bp_zpk(z, p, k, wo=1.0, bw=1.0):
     Parameters
     ----------
     z : array_like
-        Zeros of the analog filter transfer function.
+        Zeros of the analog IIR filter transfer function.
     p : array_like
-        Poles of the analog filter transfer function.
+        Poles of the analog IIR filter transfer function.
     k : float
-        System gain of the analog filter transfer function.
+        System gain of the analog IIR filter transfer function.
     wo : float
         Desired passband center, as angular frequency (e.g. rad/s).
         Defaults to no change.
@@ -2256,11 +1745,6 @@ def lp2bp_zpk(z, p, k, wo=1.0, bw=1.0):
     k : float
         System gain of the transformed band-pass filter.
 
-    See Also
-    --------
-    lp2lp_zpk, lp2hp_zpk, lp2bs_zpk, bilinear
-    lp2bp
-
     Notes
     -----
     This is derived from the s-plane substitution
@@ -2269,8 +1753,6 @@ def lp2bp_zpk(z, p, k, wo=1.0, bw=1.0):
 
     This is the "wideband" transformation, producing a passband with
     geometric (log frequency) symmetry about `wo`.
-
-    .. versionadded:: 1.1.0
 
     """
     z = atleast_1d(z)
@@ -2303,7 +1785,7 @@ def lp2bp_zpk(z, p, k, wo=1.0, bw=1.0):
     return z_bp, p_bp, k_bp
 
 
-def lp2bs_zpk(z, p, k, wo=1.0, bw=1.0):
+def _zpklp2bs(z, p, k, wo=1.0, bw=1.0):
     r"""
     Transform a lowpass filter prototype to a bandstop filter.
 
@@ -2314,11 +1796,11 @@ def lp2bs_zpk(z, p, k, wo=1.0, bw=1.0):
     Parameters
     ----------
     z : array_like
-        Zeros of the analog filter transfer function.
+        Zeros of the analog IIR filter transfer function.
     p : array_like
-        Poles of the analog filter transfer function.
+        Poles of the analog IIR filter transfer function.
     k : float
-        System gain of the analog filter transfer function.
+        System gain of the analog IIR filter transfer function.
     wo : float
         Desired stopband center, as angular frequency (e.g. rad/s).
         Defaults to no change.
@@ -2335,11 +1817,6 @@ def lp2bs_zpk(z, p, k, wo=1.0, bw=1.0):
     k : float
         System gain of the transformed band-stop filter.
 
-    See Also
-    --------
-    lp2lp_zpk, lp2hp_zpk, lp2bp_zpk, bilinear
-    lp2bs
-
     Notes
     -----
     This is derived from the s-plane substitution
@@ -2348,8 +1825,6 @@ def lp2bs_zpk(z, p, k, wo=1.0, bw=1.0):
 
     This is the "wideband" transformation, producing a stopband with
     geometric (log frequency) symmetry about `wo`.
-
-    .. versionadded:: 1.1.0
 
     """
     z = atleast_1d(z)
@@ -2718,8 +2193,7 @@ def ellip(N, rp, rs, Wn, btype='low', analog=False, output='ba'):
 
 
 def bessel(N, Wn, btype='low', analog=False, output='ba', norm='phase'):
-    """
-    Bessel/Thomson digital and analog filter design.
+    """Bessel/Thomson digital and analog filter design.
 
     Design an Nth-order digital or analog Bessel filter and return the
     filter coefficients.
@@ -3621,8 +3095,8 @@ def ellipap(N, rp, rs):
 
     References
     ----------
-    .. [1] Lutova, Tosic, and Evans, "Filter Design for Signal Processing",
-           Chapters 5 and 12.
+    Lutova, Tosic, and Evans, "Filter Design for Signal Processing", Chapters 5
+    and 12.
 
     """
     if abs(int(N)) != N:
@@ -3654,7 +3128,7 @@ def ellipap(N, rp, rs):
                       disp=0)
     if m < 0 or m > 1:
         m = optimize.fminbound(_kratio, 0, 1, args=(krat,), maxfun=250,
-                               disp=0)
+                               maxiter=250, disp=0)
 
     capk = special.ellipk(m)
 
@@ -3690,31 +3164,6 @@ def ellipap(N, rp, rs):
     return z, p, k
 
 
-# TODO: Make this a real public function scipy.misc.ff
-def _falling_factorial(x, n):
-    r"""
-    Return the factorial of `x` to the `n` falling.
-
-    This is defined as:
-
-    .. math::   x^\underline n = (x)_n = x (x-1) \cdots (x-n+1)
-
-    This can more efficiently calculate ratios of factorials, since:
-
-    n!/m! == falling_factorial(n, n-m)
-
-    where n >= m
-
-    skipping the factors that cancel out
-
-    the usual factorial n! == ff(n, n)
-    """
-    val = 1
-    for k in range(x - n + 1, x + 1):
-        val *= k
-    return val
-
-
 def _bessel_poly(n, reverse=False):
     """
     Return the coefficients of Bessel polynomial of degree `n`
@@ -3735,12 +3184,11 @@ def _bessel_poly(n, reverse=False):
     Sequence is http://oeis.org/A001498 , and output can be confirmed to
     match http://oeis.org/A001498/b001498.txt :
 
-    >>> i = 0
-    >>> for n in range(51):
-    ...     for x in _bessel_poly(n, reverse=True):
-    ...         print(i, x)
-    ...         i += 1
-
+    i = 0
+    for n in range(51):
+        for x in bessel_poly(n, reverse=True):
+            print i, x
+            i += 1
     """
     if abs(int(n)) != n:
         raise ValueError("Polynomial order must be a nonnegative integer")
@@ -3749,8 +3197,9 @@ def _bessel_poly(n, reverse=False):
 
     out = []
     for k in range(n + 1):
-        num = _falling_factorial(2*n - k, n)
-        den = 2**(n - k) * factorial(k, exact=True)
+        num = factorial(2*n - k, exact=True)
+        den = 2**(n - k) * (factorial(k, exact=True) *
+                            factorial(n - k, exact=True))
         out.append(num // den)
 
     if reverse:
@@ -3862,24 +3311,26 @@ def _bessel_zeros(N):
     return x
 
 
-def _norm_factor(p, k):
+def _norm_factor(a):
     """
     Numerically find frequency shift to apply to delay-normalized filter such
     that -3 dB point is at 1 rad/sec.
 
-    `p` is an array_like of polynomial poles
-    `k` is a float gain
+    `a` is an array_like of polynomial coefficients
 
     First 10 values are listed in "Bessel Scale Factors" table,
     "Bessel Filters Polynomials, Poles and Circuit Elements 2003, C. Bond."
     """
-    p = asarray(p, dtype=complex)
+    a = asarray(a, dtype=float)
 
     def G(w):
         """
         Gain of filter
         """
-        return abs(k / prod(1j*w - p))
+        # TODO: This is inaccurate at high orders.  Evaluate using SOS when
+        # that is implemented for analog filters.
+        # https://github.com/scipy/scipy/issues/5668
+        return abs(a[-1]/npp_polyval(1j*w, a[::-1]))
 
     def cutoff(w):
         """
@@ -3950,7 +3401,8 @@ def besselap(N, norm='phase'):
     .. [1] C.R. Bond, "Bessel Filter Constants",
            http://www.crbond.com/papers/bsf.pdf
     .. [2] Campos and Calderon, "Approximate closed-form formulas for the
-           zeros of the Bessel Polynomials", :arXiv:`1105.0957`.
+           zeros of the Bessel Polynomials", arXiv:1105.0957 [math-ph],
+           http://arxiv.org/abs/1105.0957
     .. [3] Thomson, W.E., "Delay Networks having Maximally Flat Frequency
            Characteristics", Proceedings of the Institution of Electrical
            Engineers, Part III, November 1949, Vol. 96, No. 44, pp. 487-490.
@@ -3959,7 +3411,7 @@ def besselap(N, norm='phase'):
            April 1973
     .. [5] Ehrlich, "A modified Newton method for polynomials", Communications
            of the ACM, Vol. 10, Issue 2, pp. 107-108, Feb. 1967,
-           :DOI:`10.1145/363067.363115`
+           DOI:10.1145/363067.363115
     .. [6] Miller and Bohn, "A Bessel Filter Crossover, and Its Relation to
            Others", RaneNote 147, 1998, http://www.rane.com/note147.html
 
@@ -3973,253 +3425,26 @@ def besselap(N, norm='phase'):
         # Find roots of reverse Bessel polynomial
         p = 1/_bessel_zeros(N)
 
-        a_last = _falling_factorial(2*N, N) // 2**N
-
         # Shift them to a different normalization if required
-        if norm in ('delay', 'mag'):
+        a = _bessel_poly(N, reverse=True)
+
+        if norm == 'delay':
             # Normalized for group delay of 1
-            k = a_last
-            if norm == 'mag':
-                # -3 dB magnitude point is at 1 rad/sec
-                norm_factor = _norm_factor(p, k)
-                p /= norm_factor
-                k = norm_factor**-N * a_last
+            k = a[-1]
         elif norm == 'phase':
             # Phase-matched (1/2 max phase shift at 1 rad/sec)
             # Asymptotes are same as Butterworth filter
-            p *= 10**(-math.log10(a_last)/N)
+            p *= 10**(-math.log10(a[-1])/N)
             k = 1
+        elif norm == 'mag':
+            # -3 dB magnitude point is at 1 rad/sec
+            norm_factor = _norm_factor(a)
+            p /= norm_factor
+            k = norm_factor**-N * a[-1]
         else:
             raise ValueError('normalization not understood')
 
     return asarray([]), asarray(p, dtype=complex), float(k)
-
-
-def iirnotch(w0, Q):
-    """
-    Design second-order IIR notch digital filter.
-
-    A notch filter is a band-stop filter with a narrow bandwidth
-    (high quality factor). It rejects a narrow frequency band and
-    leaves the rest of the spectrum little changed.
-
-    Parameters
-    ----------
-    w0 : float
-        Normalized frequency to remove from a signal. It is a
-        scalar that must satisfy  ``0 < w0 < 1``, with ``w0 = 1``
-        corresponding to half of the sampling frequency.
-    Q : float
-        Quality factor. Dimensionless parameter that characterizes
-        notch filter -3 dB bandwidth ``bw`` relative to its center
-        frequency, ``Q = w0/bw``.
-
-    Returns
-    -------
-    b, a : ndarray, ndarray
-        Numerator (``b``) and denominator (``a``) polynomials
-        of the IIR filter.
-
-    See Also
-    --------
-    iirpeak
-
-    Notes
-    -----
-    .. versionadded:: 0.19.0
-
-    References
-    ----------
-    .. [1] Sophocles J. Orfanidis, "Introduction To Signal Processing",
-           Prentice-Hall, 1996
-
-    Examples
-    --------
-    Design and plot filter to remove the 60Hz component from a
-    signal sampled at 200Hz, using a quality factor Q = 30
-
-    >>> from scipy import signal
-    >>> import numpy as np
-    >>> import matplotlib.pyplot as plt
-
-    >>> fs = 200.0  # Sample frequency (Hz)
-    >>> f0 = 60.0  # Frequency to be removed from signal (Hz)
-    >>> Q = 30.0  # Quality factor
-    >>> w0 = f0/(fs/2)  # Normalized Frequency
-    >>> # Design notch filter
-    >>> b, a = signal.iirnotch(w0, Q)
-
-    >>> # Frequency response
-    >>> w, h = signal.freqz(b, a)
-    >>> # Generate frequency axis
-    >>> freq = w*fs/(2*np.pi)
-    >>> # Plot
-    >>> fig, ax = plt.subplots(2, 1, figsize=(8, 6))
-    >>> ax[0].plot(freq, 20*np.log10(abs(h)), color='blue')
-    >>> ax[0].set_title("Frequency Response")
-    >>> ax[0].set_ylabel("Amplitude (dB)", color='blue')
-    >>> ax[0].set_xlim([0, 100])
-    >>> ax[0].set_ylim([-25, 10])
-    >>> ax[0].grid()
-    >>> ax[1].plot(freq, np.unwrap(np.angle(h))*180/np.pi, color='green')
-    >>> ax[1].set_ylabel("Angle (degrees)", color='green')
-    >>> ax[1].set_xlabel("Frequency (Hz)")
-    >>> ax[1].set_xlim([0, 100])
-    >>> ax[1].set_yticks([-90, -60, -30, 0, 30, 60, 90])
-    >>> ax[1].set_ylim([-90, 90])
-    >>> ax[1].grid()
-    >>> plt.show()
-    """
-
-    return _design_notch_peak_filter(w0, Q, "notch")
-
-
-def iirpeak(w0, Q):
-    """
-    Design second-order IIR peak (resonant) digital filter.
-
-    A peak filter is a band-pass filter with a narrow bandwidth
-    (high quality factor). It rejects components outside a narrow
-    frequency band.
-
-    Parameters
-    ----------
-    w0 : float
-        Normalized frequency to be retained in a signal. It is a
-        scalar that must satisfy  ``0 < w0 < 1``, with ``w0 = 1`` corresponding
-        to half of the sampling frequency.
-    Q : float
-        Quality factor. Dimensionless parameter that characterizes
-        peak filter -3 dB bandwidth ``bw`` relative to its center
-        frequency, ``Q = w0/bw``.
-
-    Returns
-    -------
-    b, a : ndarray, ndarray
-        Numerator (``b``) and denominator (``a``) polynomials
-        of the IIR filter.
-
-    See Also
-    --------
-    iirnotch
-
-    Notes
-    -----
-    .. versionadded:: 0.19.0
-
-    References
-    ----------
-    .. [1] Sophocles J. Orfanidis, "Introduction To Signal Processing",
-           Prentice-Hall, 1996
-
-    Examples
-    --------
-    Design and plot filter to remove the frequencies other than the 300Hz
-    component from a signal sampled at 1000Hz, using a quality factor Q = 30
-
-    >>> from scipy import signal
-    >>> import numpy as np
-    >>> import matplotlib.pyplot as plt
-
-    >>> fs = 1000.0  # Sample frequency (Hz)
-    >>> f0 = 300.0  # Frequency to be retained (Hz)
-    >>> Q = 30.0  # Quality factor
-    >>> w0 = f0/(fs/2)  # Normalized Frequency
-    >>> # Design peak filter
-    >>> b, a = signal.iirpeak(w0, Q)
-
-    >>> # Frequency response
-    >>> w, h = signal.freqz(b, a)
-    >>> # Generate frequency axis
-    >>> freq = w*fs/(2*np.pi)
-    >>> # Plot
-    >>> fig, ax = plt.subplots(2, 1, figsize=(8, 6))
-    >>> ax[0].plot(freq, 20*np.log10(abs(h)), color='blue')
-    >>> ax[0].set_title("Frequency Response")
-    >>> ax[0].set_ylabel("Amplitude (dB)", color='blue')
-    >>> ax[0].set_xlim([0, 500])
-    >>> ax[0].set_ylim([-50, 10])
-    >>> ax[0].grid()
-    >>> ax[1].plot(freq, np.unwrap(np.angle(h))*180/np.pi, color='green')
-    >>> ax[1].set_ylabel("Angle (degrees)", color='green')
-    >>> ax[1].set_xlabel("Frequency (Hz)")
-    >>> ax[1].set_xlim([0, 500])
-    >>> ax[1].set_yticks([-90, -60, -30, 0, 30, 60, 90])
-    >>> ax[1].set_ylim([-90, 90])
-    >>> ax[1].grid()
-    >>> plt.show()
-    """
-
-    return _design_notch_peak_filter(w0, Q, "peak")
-
-
-def _design_notch_peak_filter(w0, Q, ftype):
-    """
-    Design notch or peak digital filter.
-
-    Parameters
-    ----------
-    w0 : float
-        Normalized frequency to remove from a signal. It is a
-        scalar that must satisfy  ``0 < w0 < 1``, with ``w0 = 1``
-        corresponding to half of the sampling frequency.
-    Q : float
-        Quality factor. Dimensionless parameter that characterizes
-        notch filter -3 dB bandwidth ``bw`` relative to its center
-        frequency, ``Q = w0/bw``.
-    ftype : str
-        The type of IIR filter to design:
-
-            - notch filter : ``notch``
-            - peak filter  : ``peak``
-
-    Returns
-    -------
-    b, a : ndarray, ndarray
-        Numerator (``b``) and denominator (``a``) polynomials
-        of the IIR filter.
-    """
-
-    # Guarantee that the inputs are floats
-    w0 = float(w0)
-    Q = float(Q)
-
-    # Checks if w0 is within the range
-    if w0 > 1.0 or w0 < 0.0:
-        raise ValueError("w0 should be such that 0 < w0 < 1")
-
-    # Get bandwidth
-    bw = w0/Q
-
-    # Normalize inputs
-    bw = bw*np.pi
-    w0 = w0*np.pi
-
-    # Compute -3dB atenuation
-    gb = 1/np.sqrt(2)
-
-    if ftype == "notch":
-        # Compute beta: formula 11.3.4 (p.575) from reference [1]
-        beta = (np.sqrt(1.0-gb**2.0)/gb)*np.tan(bw/2.0)
-    elif ftype == "peak":
-        # Compute beta: formula 11.3.19 (p.579) from reference [1]
-        beta = (gb/np.sqrt(1.0-gb**2.0))*np.tan(bw/2.0)
-    else:
-        raise ValueError("Unknown ftype.")
-
-    # Compute gain: formula 11.3.6 (p.575) from reference [1]
-    gain = 1.0/(1.0+beta)
-
-    # Compute numerator b and denominator a
-    # formulas 11.3.7 (p.575) and 11.3.21 (p.579)
-    # from reference [1]
-    if ftype == "notch":
-        b = gain*np.array([1.0, -2.0*np.cos(w0), 1.0])
-    else:
-        b = (1.0-gain)*np.array([1.0, 0.0, -1.0])
-    a = np.array([1.0, -2.0*gain*np.cos(w0), (2.0*gain-1.0)])
-
-    return b, a
 
 
 filter_dict = {'butter': [buttap, buttord],

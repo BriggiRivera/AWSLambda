@@ -17,7 +17,7 @@
 #
 
 
-from . import Image, TiffImagePlugin
+from PIL import Image, TiffImagePlugin
 
 import olefile
 
@@ -39,7 +39,6 @@ class MicImageFile(TiffImagePlugin.TiffImageFile):
 
     format = "MIC"
     format_description = "Microsoft Image Composer"
-    _close_exclusive_fp_after_loading = False
 
     def _open(self):
 
@@ -65,7 +64,7 @@ class MicImageFile(TiffImagePlugin.TiffImageFile):
             raise SyntaxError("not an MIC file; no image entries")
 
         self.__fp = self.fp
-        self.frame = None
+        self.frame = 0
 
         if len(self.images) > 1:
             self.category = Image.CONTAINER
@@ -81,8 +80,7 @@ class MicImageFile(TiffImagePlugin.TiffImageFile):
         return len(self.images) > 1
 
     def seek(self, frame):
-        if not self._seek_check(frame):
-            return
+
         try:
             filename = self.images[frame]
         except IndexError:
@@ -97,7 +95,6 @@ class MicImageFile(TiffImagePlugin.TiffImageFile):
     def tell(self):
 
         return self.frame
-
 
 #
 # --------------------------------------------------------------------

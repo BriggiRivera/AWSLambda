@@ -14,8 +14,8 @@
 #
 
 
-from . import Image, ImageFile
-from ._binary import i8
+from PIL import Image, ImageFile
+from PIL._binary import i8
 
 __version__ = "0.1"
 
@@ -72,7 +72,7 @@ class MpegImageFile(ImageFile.ImageFile):
             raise SyntaxError("not an MPEG file")
 
         self.mode = "RGB"
-        self._size = s.read(12), s.read(12)
+        self.size = s.read(12), s.read(12)
 
 
 # --------------------------------------------------------------------
@@ -80,6 +80,7 @@ class MpegImageFile(ImageFile.ImageFile):
 
 Image.register_open(MpegImageFile.format, MpegImageFile)
 
-Image.register_extensions(MpegImageFile.format, [".mpg", ".mpeg"])
+Image.register_extension(MpegImageFile.format, ".mpg")
+Image.register_extension(MpegImageFile.format, ".mpeg")
 
 Image.register_mime(MpegImageFile.format, "video/mpeg")

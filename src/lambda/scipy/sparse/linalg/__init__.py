@@ -42,7 +42,6 @@ Direct methods for linear equation systems:
    :toctree: generated/
 
    spsolve -- Solve the sparse linear system Ax=b
-   spsolve_triangular -- Solve the sparse linear system Ax=b for a triangular matrix
    factorized -- Pre-factorize matrix to a function solving a linear system
    MatrixRankWarning -- Warning on exactly singular matrices
    use_solver -- Select direct solver to use
@@ -60,7 +59,6 @@ Iterative methods for linear equation systems:
    lgmres -- Solve a matrix equation using the LGMRES algorithm
    minres -- Use MINimum RESidual iteration to solve Ax = b
    qmr -- Use Quasi-Minimal Residual iteration to solve A x = b
-   gcrotmk -- Solve a matrix equation using the GCROT(m,k) algorithm
 
 Iterative methods for least-squares problems:
 
@@ -121,7 +119,6 @@ from ._norm import *
 from ._expm_multiply import *
 
 __all__ = [s for s in dir() if not s.startswith('_')]
-
-from scipy._lib._testutils import PytestTester
-test = PytestTester(__name__)
-del PytestTester
+from numpy.testing import Tester
+test = Tester().test
+bench = Tester().bench

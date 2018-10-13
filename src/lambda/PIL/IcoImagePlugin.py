@@ -25,14 +25,17 @@
 import struct
 from io import BytesIO
 
-from . import Image, ImageFile, BmpImagePlugin, PngImagePlugin
-from ._binary import i8, i16le as i16, i32le as i32
+from PIL import Image, ImageFile, BmpImagePlugin, PngImagePlugin, _binary
 from math import log, ceil
 
 __version__ = "0.1"
 
 #
 # --------------------------------------------------------------------
+
+i8 = _binary.i8
+i16 = _binary.i16le
+i32 = _binary.i32le
 
 _MAGIC = b"\0\0\1\0"
 
@@ -169,15 +172,15 @@ class IcoFile(object):
             im = BmpImagePlugin.DibImageFile(self.buf)
 
             # change tile dimension to only encompass XOR image
-            im._size = (im.size[0], int(im.size[1] / 2))
+            im.size = (im.size[0], int(im.size[1] / 2))
             d, e, o, a = im.tile[0]
             im.tile[0] = d, (0, 0) + im.size, o, a
 
             # figure out where AND mask image starts
             mode = a[0]
             bpp = 8
-            for k, v in BmpImagePlugin.BIT2MODE.items():
-                if mode == v[1]:
+            for k in BmpImagePlugin.BIT2MODE.keys():
+                if mode == BmpImagePlugin.BIT2MODE[k][1]:
                     bpp = k
                     break
 
@@ -262,17 +265,6 @@ class IcoImageFile(ImageFile.ImageFile):
         self.info['sizes'] = self.ico.sizes()
         self.size = self.ico.entry[0]['dim']
         self.load()
-
-    @property
-    def size(self):
-        return self._size
-
-    @size.setter
-    def size(self, value):
-        if value not in self.info['sizes']:
-            raise ValueError(
-                "This is not one of the allowed sizes of this image")
-        self._size = value
 
     def load(self):
         im = self.ico.getimage(self.size)

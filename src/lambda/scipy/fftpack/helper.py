@@ -1,6 +1,5 @@
 from __future__ import division, print_function, absolute_import
 
-import operator
 from numpy import arange
 from numpy.fft.helper import fftshift, ifftshift, fftfreq
 from bisect import bisect_left
@@ -42,8 +41,7 @@ def rfftfreq(n, d=1.0):
     array([ 0.  ,  1.25,  1.25,  2.5 ,  2.5 ,  3.75,  3.75,  5.  ])
 
     """
-    n = operator.index(n)
-    if n < 0:
+    if not isinstance(n, int) or n < 0:
         raise ValueError("n = %s is not valid. "
                          "n must be a nonnegative integer." % n)
 
@@ -68,10 +66,6 @@ def next_fast_len(target):
     -------
     out : int
         The first 5-smooth number greater than or equal to `target`.
-
-    Notes
-    -----
-    .. versionadded:: 0.18.0
 
     Examples
     --------

@@ -25,13 +25,10 @@
 # See the README file for information on usage and redistribution.
 #
 
-from . import Image
-from ._util import isDirectory, isPath, py3
+from PIL import Image
+from PIL._util import isDirectory, isPath
 import os
 import sys
-
-LAYOUT_BASIC = 0
-LAYOUT_RAQM = 1
 
 
 class _imagingft_not_installed(object):
@@ -39,12 +36,10 @@ class _imagingft_not_installed(object):
     def __getattr__(self, id):
         raise ImportError("The _imagingft C module is not installed")
 
-
 try:
-    from . import _imagingft as core
+    from PIL import _imagingft as core
 except ImportError:
     core = _imagingft_not_installed()
-
 
 # FIXME: add support for pilfont2 format (see FontFile.py)
 
@@ -108,11 +103,9 @@ class ImageFont(object):
 
         self.font = Image.core.font(image.im, data)
 
-    def getsize(self, text, *args, **kwargs):
-        return self.font.getsize(text)
-
-    def getmask(self, text, mode="", *args, **kwargs):
-        return self.font.getmask(text, mode)
+        # delegate critical operations to internal type
+        self.getsize = self.font.getsize
+        self.getmask = self.font.getmask
 
 
 ##
@@ -122,8 +115,7 @@ class ImageFont(object):
 class FreeTypeFont(object):
     "FreeType font wrapper (requires _imagingft service)"
 
-    def __init__(self, font=None, size=10, index=0, encoding="",
-                 layout_engine=None):
+    def __init__(self, font=None, size=10, index=0, encoding=""):
         # FIXME: use service provider instead
 
         self.path = font
@@ -131,26 +123,12 @@ class FreeTypeFont(object):
         self.index = index
         self.encoding = encoding
 
-        if layout_engine not in (LAYOUT_BASIC, LAYOUT_RAQM):
-            layout_engine = LAYOUT_BASIC
-            if core.HAVE_RAQM:
-                layout_engine = LAYOUT_RAQM
-        if layout_engine == LAYOUT_RAQM and not core.HAVE_RAQM:
-            layout_engine = LAYOUT_BASIC
-
-        self.layout_engine = layout_engine
-
         if isPath(font):
-            self.font = core.getfont(font, size, index, encoding,
-                                     layout_engine=layout_engine)
+            self.font = core.getfont(font, size, index, encoding)
         else:
             self.font_bytes = font.read()
             self.font = core.getfont(
-                "", size, index, encoding, self.font_bytes, layout_engine)
-
-    def _multiline_split(self, text):
-        split_character = "\n" if isinstance(text, str) else b"\n"
-        return text.split(split_character)
+                "", size, index, encoding, self.font_bytes)
 
     def getname(self):
         return self.font.family, self.font.style
@@ -158,37 +136,23 @@ class FreeTypeFont(object):
     def getmetrics(self):
         return self.font.ascent, self.font.descent
 
-    def getsize(self, text, direction=None, features=None):
-        size, offset = self.font.getsize(text, direction, features)
+    def getsize(self, text):
+        size, offset = self.font.getsize(text)
         return (size[0] + offset[0], size[1] + offset[1])
-
-    def getsize_multiline(self, text, direction=None,
-                          spacing=4, features=None):
-        max_width = 0
-        lines = self._multiline_split(text)
-        line_spacing = self.getsize('A')[1] + spacing
-        for line in lines:
-            line_width, line_height = self.getsize(line, direction, features)
-            max_width = max(max_width, line_width)
-
-        return max_width, len(lines)*line_spacing - spacing
 
     def getoffset(self, text):
         return self.font.getsize(text)[1]
 
-    def getmask(self, text, mode="", direction=None, features=None):
-        return self.getmask2(text, mode, direction=direction,
-                             features=features)[0]
+    def getmask(self, text, mode=""):
+        return self.getmask2(text, mode)[0]
 
-    def getmask2(self, text, mode="", fill=Image.core.fill, direction=None,
-                 features=None, *args, **kwargs):
-        size, offset = self.font.getsize(text, direction, features)
+    def getmask2(self, text, mode="", fill=Image.core.fill):
+        size, offset = self.font.getsize(text)
         im = fill("L", size, 0)
-        self.font.render(text, im.id, mode == "1", direction, features)
+        self.font.render(text, im.id, mode == "1")
         return im, offset
 
-    def font_variant(self, font=None, size=None, index=None, encoding=None,
-                     layout_engine=None):
+    def font_variant(self, font=None, size=None, index=None, encoding=None):
         """
         Create a copy of this FreeTypeFont object,
         using any specified arguments to override the settings.
@@ -198,13 +162,11 @@ class FreeTypeFont(object):
 
         :return: A FreeTypeFont object.
         """
-        return FreeTypeFont(
-            font=self.path if font is None else font,
-            size=self.size if size is None else size,
-            index=self.index if index is None else index,
-            encoding=self.encoding if encoding is None else encoding,
-            layout_engine=self.layout_engine if layout_engine is None else layout_engine
-        )
+        return FreeTypeFont(font=self.path if font is None else font,
+                            size=self.size if size is None else size,
+                            index=self.index if index is None else index,
+                            encoding=self.encoding if encoding is None else
+                            encoding)
 
 
 class TransposedFont(object):
@@ -223,14 +185,14 @@ class TransposedFont(object):
         self.font = font
         self.orientation = orientation  # any 'transpose' argument, or None
 
-    def getsize(self, text, *args, **kwargs):
+    def getsize(self, text):
         w, h = self.font.getsize(text)
         if self.orientation in (Image.ROTATE_90, Image.ROTATE_270):
             return h, w
         return w, h
 
-    def getmask(self, text, mode="", *args, **kwargs):
-        im = self.font.getmask(text, mode, *args, **kwargs)
+    def getmask(self, text, mode=""):
+        im = self.font.getmask(text, mode)
         if self.orientation is not None:
             return im.transpose(self.orientation)
         return im
@@ -250,19 +212,17 @@ def load(filename):
     return f
 
 
-def truetype(font=None, size=10, index=0, encoding="",
-             layout_engine=None):
+def truetype(font=None, size=10, index=0, encoding=""):
     """
-    Load a TrueType or OpenType font from a file or file-like object,
-    and create a font object.
-    This function loads a font object from the given file or file-like
-    object, and creates a font object for a font of the given size.
+    Load a TrueType or OpenType font file, and create a font object.
+    This function loads a font object from the given file, and creates
+    a font object for a font of the given size.
 
     This function requires the _imagingft service.
 
-    :param font: A filename or file-like object containing a TrueType font.
-                     Under Windows, if the file is not found in this filename,
-                     the loader also looks in Windows :file:`fonts/` directory.
+    :param font: A truetype font file. Under Windows, if the file
+                     is not found in this filename, the loader also looks in
+                     Windows :file:`fonts/` directory.
     :param size: The requested size, in points.
     :param index: Which font face to load (default is first available face).
     :param encoding: Which font encoding to use (default is Unicode). Common
@@ -270,14 +230,12 @@ def truetype(font=None, size=10, index=0, encoding="",
                      Symbol), "ADOB" (Adobe Standard), "ADBE" (Adobe Expert),
                      and "armn" (Apple Roman). See the FreeType documentation
                      for more information.
-    :param layout_engine: Which layout engine to use, if available:
-                     `ImageFont.LAYOUT_BASIC` or `ImageFont.LAYOUT_RAQM`.
     :return: A font object.
     :exception IOError: If the file could not be read.
     """
 
     try:
-        return FreeTypeFont(font, size, index, encoding, layout_engine)
+        return FreeTypeFont(font, size, index, encoding)
     except IOError:
         ttf_filename = os.path.basename(font)
 
@@ -308,20 +266,16 @@ def truetype(font=None, size=10, index=0, encoding="",
                 for walkfilename in walkfilenames:
                     if ext and walkfilename == ttf_filename:
                         fontpath = os.path.join(walkroot, walkfilename)
-                        return FreeTypeFont(fontpath, size, index,
-                                            encoding, layout_engine)
-                    elif (not ext and
-                          os.path.splitext(walkfilename)[0] == ttf_filename):
+                        return FreeTypeFont(fontpath, size, index, encoding)
+                    elif not ext and os.path.splitext(walkfilename)[0] == ttf_filename:
                         fontpath = os.path.join(walkroot, walkfilename)
                         if os.path.splitext(fontpath)[1] == '.ttf':
-                            return FreeTypeFont(fontpath, size, index,
-                                                encoding, layout_engine)
-                        if not ext \
-                           and first_font_with_a_different_extension is None:
+                            return FreeTypeFont(fontpath, size, index, encoding)
+                        if not ext and first_font_with_a_different_extension is None:
                             first_font_with_a_different_extension = fontpath
         if first_font_with_a_different_extension:
             return FreeTypeFont(first_font_with_a_different_extension, size,
-                                index, encoding, layout_engine)
+                                index, encoding)
         raise
 
 
@@ -337,10 +291,10 @@ def load_path(filename):
     for directory in sys.path:
         if isDirectory(directory):
             if not isinstance(filename, str):
-                if py3:
-                    filename = filename.decode("utf-8")
-                else:
+                if bytes is str:
                     filename = filename.encode("utf-8")
+                else:
+                    filename = filename.decode("utf-8")
             try:
                 return load(os.path.join(directory, filename))
             except IOError:

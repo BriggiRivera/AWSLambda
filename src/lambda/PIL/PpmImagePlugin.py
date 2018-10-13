@@ -15,14 +15,25 @@
 #
 
 
-from . import Image, ImageFile
+import string
+
+from PIL import Image, ImageFile
 
 __version__ = "0.2"
 
 #
 # --------------------------------------------------------------------
 
-b_whitespace = b'\x20\x09\x0a\x0b\x0c\x0d'
+b_whitespace = string.whitespace
+try:
+    import locale
+    locale_lang, locale_enc = locale.getlocale()
+    if locale_enc is None:
+        locale_lang, locale_enc = locale.getdefaultlocale()
+    b_whitespace = b_whitespace.decode(locale_enc)
+except:
+    pass
+b_whitespace = b_whitespace.encode('ascii', 'ignore')
 
 MODES = {
     # standard
@@ -83,8 +94,7 @@ class PpmImageFile(ImageFile.ImageFile):
                     if s not in b_whitespace:
                         break
                     if s == b"":
-                        raise ValueError(
-                            "File does not extend beyond magic number")
+                        raise ValueError("File does not extend beyond magic number")
                 if s != b"#":
                     break
                 s = self.fp.readline()
@@ -107,7 +117,7 @@ class PpmImageFile(ImageFile.ImageFile):
                         self.mode = 'I'
                         rawmode = 'I;32B'
 
-        self._size = xsize, ysize
+        self.size = xsize, ysize
         self.tile = [("raw",
                      (0, 0, xsize, ysize),
                      self.fp.tell(),
@@ -151,8 +161,9 @@ def _save(im, fp, filename):
 #
 # --------------------------------------------------------------------
 
-
 Image.register_open(PpmImageFile.format, PpmImageFile, _accept)
 Image.register_save(PpmImageFile.format, _save)
 
-Image.register_extensions(PpmImageFile.format, [".pbm", ".pgm", ".ppm"])
+Image.register_extension(PpmImageFile.format, ".pbm")
+Image.register_extension(PpmImageFile.format, ".pgm")
+Image.register_extension(PpmImageFile.format, ".ppm")

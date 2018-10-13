@@ -4,7 +4,6 @@ import math
 import numpy as np
 from scipy._lib.six import xrange
 from scipy._lib.six import string_types
-from numpy.lib.stride_tricks import as_strided
 
 
 __all__ = ['tri', 'tril', 'triu', 'toeplitz', 'circulant', 'hankel',
@@ -66,7 +65,7 @@ def tri(N, M=None, k=0, dtype=None):
         #       As tri(N,'d') is equivalent to tri(N,dtype='d')
         dtype = M
         M = N
-    m = np.greater_equal.outer(np.arange(k, N+k), np.arange(M))
+    m = np.greater_equal(np.subtract.outer(np.arange(N), np.arange(M)), -k)
     if dtype is None:
         return m
     else:
@@ -165,11 +164,10 @@ def toeplitz(c, r=None):
     A : (len(c), len(r)) ndarray
         The Toeplitz matrix. Dtype is the same as ``(c[0] + r[0]).dtype``.
 
-    See Also
+    See also
     --------
     circulant : circulant matrix
     hankel : Hankel matrix
-    solve_toeplitz : Solve a Toeplitz system.
 
     Notes
     -----
@@ -195,12 +193,14 @@ def toeplitz(c, r=None):
         r = c.conjugate()
     else:
         r = np.asarray(r).ravel()
-    # Form a 1D array containing a reversed c followed by r[1:] that could be
-    # strided to give us toeplitz matrix.
-    vals = np.concatenate((c[::-1], r[1:]))
-    out_shp = len(c), len(r)
-    n = vals.strides[0]
-    return as_strided(vals[len(c)-1:], shape=out_shp, strides=(-n, n)).copy()
+    # Form a 1D array of values to be used in the matrix, containing a reversed
+    # copy of r[1:], followed by c.
+    vals = np.concatenate((r[-1:0:-1], c))
+    a, b = np.ogrid[0:len(c), len(r) - 1:-1:-1]
+    indx = a + b
+    # `indx` is a 2D array of indices into the 1D array `vals`, arranged so
+    # that `vals[indx]` is the Toeplitz matrix.
+    return vals[indx]
 
 
 def circulant(c):
@@ -217,11 +217,10 @@ def circulant(c):
     A : (N, N) ndarray
         A circulant matrix whose first column is `c`.
 
-    See Also
+    See also
     --------
     toeplitz : Toeplitz matrix
     hankel : Hankel matrix
-    solve_circulant : Solve a circulant system.
 
     Notes
     -----
@@ -237,11 +236,11 @@ def circulant(c):
 
     """
     c = np.asarray(c).ravel()
-    # Form an extended array that could be strided to give circulant version
-    c_ext = np.concatenate((c[::-1], c[:0:-1]))
-    L = len(c)
-    n = c_ext.strides[0]
-    return as_strided(c_ext[L-1:], shape=(L, L), strides=(-n, n)).copy()
+    a, b = np.ogrid[0:len(c), 0:-len(c):-1]
+    indx = a + b
+    # `indx` is a 2D array of indices into `c`, arranged so that `c[indx]` is
+    # the circulant matrix.
+    return c[indx]
 
 
 def hankel(c, r=None):
@@ -268,7 +267,7 @@ def hankel(c, r=None):
     A : (len(c), len(r)) ndarray
         The Hankel matrix. Dtype is the same as ``(c[0] + r[0]).dtype``.
 
-    See Also
+    See also
     --------
     toeplitz : Toeplitz matrix
     circulant : circulant matrix
@@ -295,10 +294,11 @@ def hankel(c, r=None):
     # Form a 1D array of values to be used in the matrix, containing `c`
     # followed by r[1:].
     vals = np.concatenate((c, r[1:]))
-    # Stride on concatenated array to get hankel matrix
-    out_shp = len(c), len(r)
-    n = vals.strides[0]
-    return as_strided(vals, shape=out_shp, strides=(n, n)).copy()
+    a, b = np.ogrid[0:len(c), 0:len(r)]
+    indx = a + b
+    # `indx` is a 2D array of indices into the 1D array `vals`, arranged so
+    # that `vals[indx]` is the Hankel matrix.
+    return vals[indx]
 
 
 def hadamard(n, dtype=int):
@@ -363,7 +363,7 @@ def leslie(f, s):
     Create a Leslie matrix.
 
     Given the length n array of fecundity coefficients `f` and the length
-    n-1 array of survival coefficients `s`, return the associated Leslie matrix.
+    n-1 array of survival coefficents `s`, return the associated Leslie matrix.
 
     Parameters
     ----------
@@ -498,8 +498,7 @@ def block_diag(*arrs):
     If all the input arrays are square, the output is known as a
     block diagonal matrix.
 
-    Empty sequences (i.e., array-likes of zero size) will not be ignored.
-    Noteworthy, both [] and [[]] are treated as matrices with shape ``(1,0)``.
+    Empty sequences (i.e., array-likes of zero size) are ignored.
 
     Examples
     --------
@@ -509,18 +508,9 @@ def block_diag(*arrs):
     >>> B = [[3, 4, 5],
     ...      [6, 7, 8]]
     >>> C = [[7]]
-    >>> P = np.zeros((2, 0), dtype='int32')
     >>> block_diag(A, B, C)
     array([[1, 0, 0, 0, 0, 0],
            [0, 1, 0, 0, 0, 0],
-           [0, 0, 3, 4, 5, 0],
-           [0, 0, 6, 7, 8, 0],
-           [0, 0, 0, 0, 0, 7]])
-    >>> block_diag(A, P, B, C)
-    array([[1, 0, 0, 0, 0, 0],
-           [0, 1, 0, 0, 0, 0],
-           [0, 0, 0, 0, 0, 0],
-           [0, 0, 0, 0, 0, 0],
            [0, 0, 3, 4, 5, 0],
            [0, 0, 6, 7, 8, 0],
            [0, 0, 0, 0, 0, 7]])
@@ -540,7 +530,7 @@ def block_diag(*arrs):
         raise ValueError("arguments in the following positions have dimension "
                          "greater than 2: %s" % bad_args)
 
-    shapes = np.array([a.shape for a in arrs])
+    shapes = np.array([a.shape if a.size > 0 else [0, 0] for a in arrs])
     out_dtype = np.find_common_type([arr.dtype for arr in arrs], [])
     out = np.zeros(np.sum(shapes, axis=0), dtype=out_dtype)
 
@@ -852,9 +842,9 @@ def pascal(n, kind='symmetric', exact=True):
     else:
         L_n = comb(*np.ogrid[:n, :n])
 
-    if kind == 'lower':
+    if kind is 'lower':
         p = L_n
-    elif kind == 'upper':
+    elif kind is 'upper':
         p = L_n.T
     else:
         p = np.dot(L_n, L_n.T)

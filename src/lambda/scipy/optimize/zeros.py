@@ -71,7 +71,8 @@ def newton(func, x0, fprime=None, args=(), tol=1.48e-8, maxiter=50,
     Find a zero of the function `func` given a nearby starting point `x0`.
     The Newton-Raphson method is used if the derivative `fprime` of `func`
     is provided, otherwise the secant method is used.  If the second order
-    derivative `fprime2` of `func` is provided, then Halley's method is used.
+    derivate `fprime2` of `func` is provided, parabolic Halley's method
+    is used.
 
     Parameters
     ----------
@@ -94,8 +95,8 @@ def newton(func, x0, fprime=None, args=(), tol=1.48e-8, maxiter=50,
     fprime2 : function, optional
         The second order derivative of the function when available and
         convenient. If it is None (default), then the normal Newton-Raphson
-        or the secant method is used. If it is not None, then Halley's method
-        is used.
+        or the secant method is used. If it is given, parabolic Halley's
+        method is used.
 
     Returns
     -------
@@ -122,72 +123,49 @@ def newton(func, x0, fprime=None, args=(), tol=1.48e-8, maxiter=50,
     sign. The brentq algorithm is recommended for general use in one
     dimensional problems when such an interval has been found.
 
-    Examples
-    --------
-
-    >>> def f(x):
-    ...     return (x**3 - 1)  # only one real root at x = 1
-    
-    >>> from scipy import optimize
-
-    ``fprime`` not provided, use secant method
-    
-    >>> root = optimize.newton(f, 1.5)
-    >>> root
-    1.0000000000000016
-    >>> root = optimize.newton(f, 1.5, fprime2=lambda x: 6 * x)
-    >>> root
-    1.0000000000000016
-
-    Only ``fprime`` provided, use Newton Raphson method
-    
-    >>> root = optimize.newton(f, 1.5, fprime=lambda x: 3 * x**2)
-    >>> root
-    1.0
-    
-    Both ``fprime2`` and ``fprime`` provided, use Halley's method
-
-    >>> root = optimize.newton(f, 1.5, fprime=lambda x: 3 * x**2,
-    ...                        fprime2=lambda x: 6 * x)
-    >>> root
-    1.0
-
     """
     if tol <= 0:
         raise ValueError("tol too small (%g <= 0)" % tol)
     if maxiter < 1:
         raise ValueError("maxiter must be greater than 0")
-    # Multiply by 1.0 to convert to floating point.  We don't use float(x0)
-    # so it still works if x0 is complex.
-    p0 = 1.0 * x0
     if fprime is not None:
         # Newton-Rapheson method
+        # Multiply by 1.0 to convert to floating point.  We don't use float(x0)
+        # so it still works if x0 is complex.
+        p0 = 1.0 * x0
+        fder2 = 0
         for iter in range(maxiter):
-            fder = fprime(p0, *args)
+            myargs = (p0,) + args
+            fder = fprime(*myargs)
             if fder == 0:
                 msg = "derivative was zero."
                 warnings.warn(msg, RuntimeWarning)
                 return p0
-            fval = func(p0, *args)
-            newton_step = fval / fder
-            if fprime2 is None:
+            fval = func(*myargs)
+            if fprime2 is not None:
+                fder2 = fprime2(*myargs)
+            if fder2 == 0:
                 # Newton step
-                p = p0 - newton_step
+                p = p0 - fval / fder
             else:
-                fder2 = fprime2(p0, *args)
-                # Halley's method
-                p = p0 - newton_step / (1.0 - 0.5 * newton_step * fder2 / fder)
+                # Parabolic Halley's method
+                discr = fder ** 2 - 2 * fval * fder2
+                if discr < 0:
+                    p = p0 - fder / fder2
+                else:
+                    p = p0 - 2*fval / (fder + sign(fder) * sqrt(discr))
             if abs(p - p0) < tol:
                 return p
             p0 = p
     else:
         # Secant method
+        p0 = x0
         if x0 >= 0:
             p1 = x0*(1 + 1e-4) + 1e-4
         else:
             p1 = x0*(1 + 1e-4) - 1e-4
-        q0 = func(p0, *args)
-        q1 = func(p1, *args)
+        q0 = func(*((p0,) + args))
+        q1 = func(*((p1,) + args))
         for iter in range(maxiter):
             if q1 == q0:
                 if p1 != p0:
@@ -201,7 +179,7 @@ def newton(func, x0, fprime=None, args=(), tol=1.48e-8, maxiter=50,
             p0 = p1
             q0 = q1
             p1 = p
-            q1 = func(p1, *args)
+            q1 = func(*((p1,) + args))
     msg = "Failed to converge after %d iterations, value is %s" % (maxiter, p)
     raise RuntimeError(msg)
 
@@ -254,22 +232,6 @@ def bisect(f, a, b, args=(),
     r : RootResults (present if ``full_output = True``)
         Object containing information about the convergence.  In particular,
         ``r.converged`` is True if the routine converged.
-
-    Examples
-    --------
-
-    >>> def f(x):
-    ...     return (x**2 - 1)
-
-    >>> from scipy import optimize
-
-    >>> root = optimize.bisect(f, 0, 2)
-    >>> root
-    1.0
-
-    >>> root = optimize.bisect(f, -2, 0)
-    >>> root
-    -1.0
 
     See Also
     --------
@@ -342,28 +304,12 @@ def ridder(f, a, b, args=(),
     -----
     Uses [Ridders1979]_ method to find a zero of the function `f` between the
     arguments `a` and `b`. Ridders' method is faster than bisection, but not
-    generally as fast as the Brent routines. [Ridders1979]_ provides the
+    generally as fast as the Brent rountines. [Ridders1979]_ provides the
     classic description and source of the algorithm. A description can also be
     found in any recent edition of Numerical Recipes.
 
     The routine used here diverges slightly from standard presentations in
     order to be a bit more careful of tolerance.
-
-    Examples
-    --------
-
-    >>> def f(x):
-    ...     return (x**2 - 1)
-
-    >>> from scipy import optimize
-
-    >>> root = optimize.ridder(f, 0, 2)
-    >>> root
-    1.0
-
-    >>> root = optimize.ridder(f, -2, 0)
-    >>> root
-    -1.0
 
     References
     ----------
@@ -419,14 +365,14 @@ def brentq(f, a, b, args=(),
         The computed root ``x0`` will satisfy ``np.allclose(x, x0,
         atol=xtol, rtol=rtol)``, where ``x`` is the exact root. The
         parameter must be nonnegative. For nice functions, Brent's
-        method will often satisfy the above condition with ``xtol/2``
+        method will often satisfy the above condition will ``xtol/2``
         and ``rtol/2``. [Brent1973]_
     rtol : number, optional
         The computed root ``x0`` will satisfy ``np.allclose(x, x0,
         atol=xtol, rtol=rtol)``, where ``x`` is the exact root. The
         parameter cannot be smaller than its default value of
         ``4*np.finfo(float).eps``. For nice functions, Brent's
-        method will often satisfy the above condition with ``xtol/2``
+        method will often satisfy the above condition will ``xtol/2``
         and ``rtol/2``. [Brent1973]_
     maxiter : number, optional
         if convergence is not achieved in maxiter iterations, an error is
@@ -464,7 +410,7 @@ def brentq(f, a, b, args=(),
     n-dimensional root-finding
       `fsolve`
     one-dimensional root-finding
-      `brenth`, `ridder`, `bisect`, `newton`
+      `brentq`, `brenth`, `ridder`, `bisect`, `newton`
     scalar fixed-point finder
       `fixed_point`
 
@@ -472,20 +418,6 @@ def brentq(f, a, b, args=(),
     -----
     `f` must be continuous.  f(a) and f(b) must have opposite signs.
 
-    Examples
-    --------
-    >>> def f(x):
-    ...     return (x**2 - 1)
-
-    >>> from scipy import optimize
-
-    >>> root = optimize.brentq(f, -2, 0)
-    >>> root
-    -1.0
-
-    >>> root = optimize.brentq(f, 0, 2)
-    >>> root
-    1.0
 
     References
     ----------
@@ -538,13 +470,13 @@ def brenth(f, a, b, args=(),
         atol=xtol, rtol=rtol)``, where ``x`` is the exact root. The
         parameter must be nonnegative. As with `brentq`, for nice
         functions the method will often satisfy the above condition
-        with ``xtol/2`` and ``rtol/2``.
+        will ``xtol/2`` and ``rtol/2``.
     rtol : number, optional
         The computed root ``x0`` will satisfy ``np.allclose(x, x0,
         atol=xtol, rtol=rtol)``, where ``x`` is the exact root. The
         parameter cannot be smaller than its default value of
         ``4*np.finfo(float).eps``. As with `brentq`, for nice functions
-        the method will often satisfy the above condition with
+        the method will often satisfy the above condition will
         ``xtol/2`` and ``rtol/2``.
     maxiter : number, optional
         if convergence is not achieved in maxiter iterations, an error is
@@ -566,21 +498,6 @@ def brenth(f, a, b, args=(),
     r : RootResults (present if ``full_output = True``)
         Object containing information about the convergence.  In particular,
         ``r.converged`` is True if the routine converged.
-
-    Examples
-    --------
-    >>> def f(x):
-    ...     return (x**2 - 1)
-
-    >>> from scipy import optimize
-
-    >>> root = optimize.brenth(f, -2, 0)
-    >>> root
-    -1.0
-
-    >>> root = optimize.brenth(f, 0, 2)
-    >>> root
-    1.0
 
     See Also
     --------

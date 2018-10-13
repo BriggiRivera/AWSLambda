@@ -11,7 +11,7 @@ from ._texture import (_glcm_loop,
                        _multiblock_lbp)
 
 
-def greycomatrix(image, distances, angles, levels=None, symmetric=False,
+def greycomatrix(image, distances, angles, levels=256, symmetric=False,
                  normed=False):
     """Calculate the grey-level co-occurrence matrix.
 
@@ -20,21 +20,18 @@ def greycomatrix(image, distances, angles, levels=None, symmetric=False,
 
     Parameters
     ----------
-    image : array_like
-        Integer typed input image. Only positive valued images are supported.
-        If type is other than uint8, the argument `levels` needs to be set.
+    image : array_like of uint8
+        Integer typed input image. The image will be cast to uint8, so
+        the maximum value must be less than 256.
     distances : array_like
         List of pixel pair distance offsets.
     angles : array_like
         List of pixel pair angles in radians.
     levels : int, optional
-        The input image should contain integers in [0, `levels`-1],
+        The input image should contain integers in [0, levels-1],
         where levels indicate the number of grey-levels counted
-        (typically 256 for an 8-bit image). This argument is required for
-        16-bit images or higher and is typically the maximum of the image.
-        As the output matrix is at least `levels` x `levels`, it might
-        be preferable to use binning of the input image rather than
-        large values for `levels`.
+        (typically 256 for an 8-bit image). The maximum value is
+        256.
     symmetric : bool, optional
         If True, the output matrix `P[:, :, d, theta]` is symmetric. This
         is accomplished by ignoring the order of value pairs, so both
@@ -53,8 +50,7 @@ def greycomatrix(image, distances, angles, levels=None, symmetric=False,
         `P[i,j,d,theta]` is the number of times that grey-level `j`
         occurs at a distance `d` and at an angle `theta` from
         grey-level `i`. If `normed` is `False`, the output is of
-        type uint32, otherwise it is float64. The dimensions are:
-        levels x levels x number of distances x number of angles.
+        type uint32, otherwise it is float64.
 
     References
     ----------
@@ -74,8 +70,7 @@ def greycomatrix(image, distances, angles, levels=None, symmetric=False,
     ...                   [0, 0, 1, 1],
     ...                   [0, 2, 2, 2],
     ...                   [2, 2, 3, 3]], dtype=np.uint8)
-    >>> result = greycomatrix(image, [1], [0, np.pi/4, np.pi/2, 3*np.pi/4],
-    ...                       levels=4)
+    >>> result = greycomatrix(image, [1], [0, np.pi/4, np.pi/2, 3*np.pi/4], levels=4)
     >>> result[:, :, 0, 0]
     array([[2, 2, 1, 0],
            [0, 2, 0, 0],
@@ -102,30 +97,11 @@ def greycomatrix(image, distances, angles, levels=None, symmetric=False,
     assert_nD(distances, 1, 'distances')
     assert_nD(angles, 1, 'angles')
 
+    assert levels <= 256
     image = np.ascontiguousarray(image)
-
-    image_max = image.max()
-
-    if np.issubdtype(image.dtype, np.floating):
-        raise ValueError("Float images are not supported by greycomatrix. "
-                         "Convert the image to an unsigned integer type.")
-
-    # for image type > 8bit, levels must be set.
-    if image.dtype not in (np.uint8, np.int8) and levels is None:
-        raise ValueError("The levels argument is required for data types "
-                         "other than uint8. The resulting matrix will be at "
-                         "least levels ** 2 in size.")
-
-    if np.issubdtype(image.dtype, np.signedinteger) and np.any(image < 0):
-        raise ValueError("Negative-valued images are not supported.")
-
-    if levels is None:
-        levels = 256
-
-    if image_max >= levels:
-        raise ValueError("The maximum grayscale value in the image should be "
-                         "smaller than the number of levels.")
-
+    assert image.min() >= 0
+    assert image.max() < levels
+    image = image.astype(np.uint8)
     distances = np.ascontiguousarray(distances, dtype=np.float64)
     angles = np.ascontiguousarray(angles, dtype=np.float64)
 
@@ -301,7 +277,7 @@ def local_binary_pattern(image, P, R, method='default'):
     .. [1] Multiresolution Gray-Scale and Rotation Invariant Texture
            Classification with Local Binary Patterns.
            Timo Ojala, Matti Pietikainen, Topi Maenpaa.
-           http://www.ee.oulu.fi/research/mvmp/mvg/files/pdf/pdf_94.pdf, 2002.
+           http://www.rafbis.it/biplab15/images/stories/docenti/Danielriccio/Articoliriferimento/LBP.pdf, 2002.
     .. [2] Face recognition with local binary patterns.
            Timo Ahonen, Abdenour Hadid, Matti Pietikainen,
            http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.214.6851,
@@ -367,10 +343,10 @@ def multiblock_lbp(int_image, r, c, width, height):
     return lbp_code
 
 
-def draw_multiblock_lbp(image, r, c, width, height,
+def draw_multiblock_lbp(img, r, c, width, height,
                         lbp_code=0,
-                        color_greater_block=(1, 1, 1),
-                        color_less_block=(0, 0.69, 0.96),
+                        color_greater_block=[1, 1, 1],
+                        color_less_block=[0, 0.69, 0.96],
                         alpha=0.5
                         ):
     """Multi-block local binary pattern visualization.
@@ -381,7 +357,7 @@ def draw_multiblock_lbp(image, r, c, width, height,
 
     Parameters
     ----------
-    image : ndarray of float or uint
+    img : ndarray of float or uint
         Image on which to visualize the pattern.
     r : int
         Row-coordinate of top left corner of a rectangle containing feature.
@@ -396,15 +372,15 @@ def draw_multiblock_lbp(image, r, c, width, height,
     lbp_code : int
         The descriptor of feature to visualize. If not provided, the
         descriptor with 0 value will be used.
-    color_greater_block : tuple of 3 floats
+    color_greater_block : list of 3 floats
         Floats specifying the color for the block that has greater
         intensity value. They should be in the range [0, 1].
         Corresponding values define (R, G, B) values. Default value
-        is white (1, 1, 1).
-    color_greater_block : tuple of 3 floats
+        is white [1, 1, 1].
+    color_greater_block : list of 3 floats
         Floats specifying the color for the block that has greater intensity
         value. They should be in the range [0, 1]. Corresponding values define
-        (R, G, B) values. Default value is cyan (0, 0.69, 0.96).
+        (R, G, B) values. Default value is cyan [0, 0.69, 0.96].
     alpha : float
         Value in the range [0, 1] that specifies opacity of visualization.
         1 - fully transparent, 0 - opaque.
@@ -429,11 +405,11 @@ def draw_multiblock_lbp(image, r, c, width, height,
     color_less_block = np.asarray(color_less_block, dtype=np.float64)
 
     # Copy array to avoid the changes to the original one.
-    output = np.copy(image)
+    output = np.copy(img)
 
     # As the visualization uses RGB color we need 3 bands.
-    if len(image.shape) < 3:
-        output = gray2rgb(image)
+    if len(img.shape) < 3:
+        output = gray2rgb(img)
 
     # Colors are specified in floats.
     output = img_as_float(output)
@@ -464,14 +440,12 @@ def draw_multiblock_lbp(image, r, c, width, height,
 
         # Mix-in the visualization colors.
         if has_greater_value:
-            new_value = ((1-alpha) *
-                         output[curr_r:curr_r+height, curr_c:curr_c+width] +
-                         alpha * color_greater_block)
+            new_value = ((1-alpha) * output[curr_r:curr_r+height, curr_c:curr_c+width]
+                         + alpha * color_greater_block)
             output[curr_r:curr_r+height, curr_c:curr_c+width] = new_value
         else:
-            new_value = ((1-alpha) *
-                         output[curr_r:curr_r+height, curr_c:curr_c+width] +
-                         alpha * color_less_block)
+            new_value = ((1-alpha) * output[curr_r:curr_r+height, curr_c:curr_c+width]
+                         + alpha * color_less_block)
             output[curr_r:curr_r+height, curr_c:curr_c+width] = new_value
 
     return output

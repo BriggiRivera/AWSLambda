@@ -17,7 +17,6 @@ stored in a rectangular array.
    pdist   -- pairwise distances between observation vectors.
    cdist   -- distances between two collections of observation vectors
    squareform -- convert distance matrix to a condensed one and vice versa
-   directed_hausdorff -- directed Hausdorff distance between arrays
 
 Predicates for checking the validity of distance matrices, both
 condensed and redundant. Also contained in this module are functions
@@ -49,7 +48,7 @@ functions. Use ``pdist`` for this purpose.
    minkowski        -- the Minkowski distance.
    seuclidean       -- the normalized Euclidean distance.
    sqeuclidean      -- the squared Euclidean distance.
-   wminkowski       -- (deprecated) alias of `minkowski`.
+   wminkowski       -- the weighted Minkowski distance.
 
 Distance functions between two boolean vectors (representing sets) ``u`` and
 ``v``.  As in the case of numerical vectors, ``pdist`` is more efficient for
@@ -62,6 +61,7 @@ computing the distances between all pairs.
    hamming          -- the Hamming distance.
    jaccard          -- the Jaccard distance.
    kulsinski        -- the Kulsinski distance.
+   matching         -- the matching dissimilarity.
    rogerstanimoto   -- the Rogers-Tanimoto dissimilarity.
    russellrao       -- the Russell-Rao dissimilarity.
    sokalmichener    -- the Sokal-Michener dissimilarity.
@@ -84,7 +84,6 @@ __all__ = [
     'correlation',
     'cosine',
     'dice',
-    'directed_hausdorff',
     'euclidean',
     'hamming',
     'is_valid_dm',
@@ -112,208 +111,39 @@ __all__ = [
 import warnings
 import numpy as np
 
-from functools import partial
-from collections import namedtuple
 from scipy._lib.six import callable, string_types
 from scipy._lib.six import xrange
-from scipy._lib._util import _asarray_validated
 
 from . import _distance_wrap
-from . import _hausdorff
 from ..linalg import norm
 
 
-def _args_to_kwargs_xdist(args, kwargs, metric, func_name):
-    """
-    Convert legacy positional arguments to keyword arguments for pdist/cdist.
-    """
-    if not args:
-        return kwargs
-
-    if (callable(metric) and metric not in [
-            braycurtis, canberra, chebyshev, cityblock, correlation, cosine,
-            dice, euclidean, hamming, jaccard, kulsinski, mahalanobis,
-            matching, minkowski, rogerstanimoto, russellrao, seuclidean,
-            sokalmichener, sokalsneath, sqeuclidean, yule, wminkowski]):
-        raise TypeError('When using a custom metric arguments must be passed'
-                        'as keyword (i.e., ARGNAME=ARGVALUE)')
-
-    if func_name == 'pdist':
-        old_arg_names = ['p', 'w', 'V', 'VI']
-    else:
-        old_arg_names = ['p', 'V', 'VI', 'w']
-
-    num_args = len(args)
-    warnings.warn('%d metric parameters have been passed as positional.'
-                  'This will raise an error in a future version.'
-                  'Please pass arguments as keywords(i.e., ARGNAME=ARGVALUE)'
-                  % num_args, DeprecationWarning)
-
-    if num_args > 4:
-        raise ValueError('Deprecated %s signature accepts only 4'
-                         'positional arguments (%s), %d given.'
-                         % (func_name, ', '.join(old_arg_names), num_args))
-
-    for old_arg, arg in zip(old_arg_names, args):
-        if old_arg in kwargs:
-            raise TypeError('%s() got multiple values for argument %s'
-                            % (func_name, old_arg))
-        kwargs[old_arg] = arg
-    return kwargs
-
-
 def _copy_array_if_base_present(a):
-    """Copy the array if its base points to a parent array."""
+    """
+    Copies the array if its base points to a parent array.
+    """
     if a.base is not None:
         return a.copy()
-    return a
-
-
-def _correlation_cdist_wrap(XA, XB, dm, **kwargs):
-    XA = XA - XA.mean(axis=1, keepdims=True)
-    XB = XB - XB.mean(axis=1, keepdims=True)
-    _distance_wrap.cdist_cosine_double_wrap(XA, XB, dm, **kwargs)
-
-
-def _correlation_pdist_wrap(X, dm, **kwargs):
-    X2 = X - X.mean(axis=1, keepdims=True)
-    _distance_wrap.pdist_cosine_double_wrap(X2, dm, **kwargs)
-
-
-def _convert_to_type(X, out_type):
-    return np.ascontiguousarray(X, dtype=out_type)
-
-
-def _filter_deprecated_kwargs(kwargs, args_blacklist):
-    # Filtering out old default keywords
-    for k in args_blacklist:
-        if k in kwargs:
-            del kwargs[k]
-            warnings.warn('Got unexpected kwarg %s. This will raise an error'
-                          ' in a future version.' % k, DeprecationWarning)
-
-
-def _nbool_correspond_all(u, v, w=None):
-    if u.dtype == v.dtype == bool and w is None:
-        not_u = ~u
-        not_v = ~v
-        nff = (not_u & not_v).sum()
-        nft = (not_u & v).sum()
-        ntf = (u & not_v).sum()
-        ntt = (u & v).sum()
+    elif np.issubsctype(a, np.float32):
+        return np.array(a, dtype=np.double)
     else:
-        dtype = np.find_common_type([int], [u.dtype, v.dtype])
-        u = u.astype(dtype)
-        v = v.astype(dtype)
-        not_u = 1.0 - u
-        not_v = 1.0 - v
-        if w is not None:
-            not_u = w * not_u
-            u = w * u
-        nff = (not_u * not_v).sum()
-        nft = (not_u * v).sum()
-        ntf = (u * not_v).sum()
-        ntt = (u * v).sum()
-    return (nff, nft, ntf, ntt)
+        return a
 
 
-def _nbool_correspond_ft_tf(u, v, w=None):
-    if u.dtype == v.dtype == bool and w is None:
-        not_u = ~u
-        not_v = ~v
-        nft = (not_u & v).sum()
-        ntf = (u & not_v).sum()
-    else:
-        dtype = np.find_common_type([int], [u.dtype, v.dtype])
-        u = u.astype(dtype)
-        v = v.astype(dtype)
-        not_u = 1.0 - u
-        not_v = 1.0 - v
-        if w is not None:
-            not_u = w * not_u
-            u = w * u
-        nft = (not_u * v).sum()
-        ntf = (u * not_v).sum()
-    return (nft, ntf)
+def _convert_to_bool(X):
+    if X.dtype != bool:
+        X = X.astype(bool)
+    if not X.flags.contiguous:
+        X = X.copy()
+    return X
 
 
-def _validate_cdist_input(XA, XB, mA, mB, n, metric_name, **kwargs):
-    if metric_name is not None:
-        # get supported types
-        types = _METRICS[metric_name].types
-        # choose best type
-        typ = types[types.index(XA.dtype)] if XA.dtype in types else types[0]
-        # validate data
-        XA = _convert_to_type(XA, out_type=typ)
-        XB = _convert_to_type(XB, out_type=typ)
-
-        # validate kwargs
-        _validate_kwargs = _METRICS[metric_name].validator
-        if _validate_kwargs:
-            kwargs = _validate_kwargs(np.vstack([XA, XB]), mA + mB, n, **kwargs)
-    else:
-        typ = None
-    return XA, XB, typ, kwargs
-
-
-def _validate_mahalanobis_kwargs(X, m, n, **kwargs):
-    VI = kwargs.pop('VI', None)
-    if VI is None:
-        if m <= n:
-            # There are fewer observations than the dimension of
-            # the observations.
-            raise ValueError("The number of observations (%d) is too "
-                             "small; the covariance matrix is "
-                             "singular. For observations with %d "
-                             "dimensions, at least %d observations "
-                             "are required." % (m, n, n + 1))
-        CV = np.atleast_2d(np.cov(X.astype(np.double).T))
-        VI = np.linalg.inv(CV).T.copy()
-    kwargs["VI"] = _convert_to_double(VI)
-    return kwargs
-
-
-def _validate_minkowski_kwargs(X, m, n, **kwargs):
-    if 'p' not in kwargs:
-        kwargs['p'] = 2.
-    return kwargs
-
-
-def _validate_pdist_input(X, m, n, metric_name, **kwargs):
-    if metric_name is not None:
-        # get supported types
-        types = _METRICS[metric_name].types
-        # choose best type
-        typ = types[types.index(X.dtype)] if X.dtype in types else types[0]
-        # validate data
-        X = _convert_to_type(X, out_type=typ)
-
-        # validate kwargs
-        _validate_kwargs = _METRICS[metric_name].validator
-        if _validate_kwargs:
-            kwargs = _validate_kwargs(X, m, n, **kwargs)
-    else:
-        typ = None
-    return X, typ, kwargs
-
-
-def _validate_seuclidean_kwargs(X, m, n, **kwargs):
-    V = kwargs.pop('V', None)
-    if V is None:
-        V = np.var(X.astype(np.double), axis=0, ddof=1)
-    else:
-        V = np.asarray(V, order='c')
-        if V.dtype != np.double:
-            raise TypeError('Variance vector V must contain doubles.')
-        if len(V.shape) != 1:
-            raise ValueError('Variance vector V must '
-                             'be one-dimensional.')
-        if V.shape[0] != n:
-            raise ValueError('Variance vector V must be of the same '
-                             'dimension as the vectors on which the distances '
-                             'are computed.')
-    kwargs['V'] = _convert_to_double(V)
-    return kwargs
+def _convert_to_double(X):
+    if X.dtype != np.double:
+        X = X.astype(np.double)
+    if not X.flags.contiguous:
+        X = X.copy()
+    return X
 
 
 def _validate_vector(u, dtype=None):
@@ -326,118 +156,9 @@ def _validate_vector(u, dtype=None):
     return u
 
 
-def _validate_weights(w, dtype=np.double):
-    w = _validate_vector(w, dtype=dtype)
-    if np.any(w < 0):
-        raise ValueError("Input weights should be all non-negative")
-    return w
-
-
-def _validate_wminkowski_kwargs(X, m, n, **kwargs):
-    w = kwargs.pop('w', None)
-    if w is None:
-        raise ValueError('weighted minkowski requires a weight '
-                         'vector `w` to be given.')
-    kwargs['w'] = _convert_to_double(w)
-    if 'p' not in kwargs:
-        kwargs['p'] = 2.
-    return kwargs
-
-
-def directed_hausdorff(u, v, seed=0):
+def minkowski(u, v, p):
     """
-    Compute the directed Hausdorff distance between two N-D arrays.
-
-    Distances between pairs are calculated using a Euclidean metric.
-
-    Parameters
-    ----------
-    u : (M,N) ndarray
-        Input array.
-    v : (O,N) ndarray
-        Input array.
-    seed : int or None
-        Local `np.random.RandomState` seed. Default is 0, a random shuffling of
-        u and v that guarantees reproducibility.
-
-    Returns
-    -------
-    d : double
-        The directed Hausdorff distance between arrays `u` and `v`,
-
-    index_1 : int
-        index of point contributing to Hausdorff pair in `u`
-
-    index_2 : int
-        index of point contributing to Hausdorff pair in `v`
-
-    Notes
-    -----
-    Uses the early break technique and the random sampling approach
-    described by [1]_. Although worst-case performance is ``O(m * o)``
-    (as with the brute force algorithm), this is unlikely in practice
-    as the input data would have to require the algorithm to explore
-    every single point interaction, and after the algorithm shuffles
-    the input points at that. The best case performance is O(m), which
-    is satisfied by selecting an inner loop distance that is less than
-    cmax and leads to an early break as often as possible. The authors
-    have formally shown that the average runtime is closer to O(m).
-
-    .. versionadded:: 0.19.0
-
-    References
-    ----------
-    .. [1] A. A. Taha and A. Hanbury, "An efficient algorithm for
-           calculating the exact Hausdorff distance." IEEE Transactions On
-           Pattern Analysis And Machine Intelligence, vol. 37 pp. 2153-63,
-           2015.
-
-    See Also
-    --------
-    scipy.spatial.procrustes : Another similarity test for two data sets
-
-    Examples
-    --------
-    Find the directed Hausdorff distance between two 2-D arrays of
-    coordinates:
-
-    >>> from scipy.spatial.distance import directed_hausdorff
-    >>> u = np.array([(1.0, 0.0),
-    ...               (0.0, 1.0),
-    ...               (-1.0, 0.0),
-    ...               (0.0, -1.0)])
-    >>> v = np.array([(2.0, 0.0),
-    ...               (0.0, 2.0),
-    ...               (-2.0, 0.0),
-    ...               (0.0, -4.0)])
-
-    >>> directed_hausdorff(u, v)[0]
-    2.23606797749979
-    >>> directed_hausdorff(v, u)[0]
-    3.0
-
-    Find the general (symmetric) Hausdorff distance between two 2-D
-    arrays of coordinates:
-
-    >>> max(directed_hausdorff(u, v)[0], directed_hausdorff(v, u)[0])
-    3.0
-
-    Find the indices of the points that generate the Hausdorff distance
-    (the Hausdorff pair):
-
-    >>> directed_hausdorff(v, u)[1:]
-    (3, 3)
-
-    """
-    u = np.asarray(u, dtype=np.float64, order='c')
-    v = np.asarray(v, dtype=np.float64, order='c')
-    result = _hausdorff.directed_hausdorff(u, v, seed)
-    return result
-
-
-def minkowski(u, v, p=2, w=None):
-    """
-    Compute the Minkowski distance between two 1-D arrays.
+    Computes the Minkowski distance between two 1-D arrays.
 
     The Minkowski distance between 1-D arrays `u` and `v`,
     is defined as
@@ -445,9 +166,6 @@ def minkowski(u, v, p=2, w=None):
     .. math::
 
        {||u-v||}_p = (\\sum{|u_i - v_i|^p})^{1/p}.
-
-
-       \\left(\\sum{w_i(|(u_i - v_i)|^p)}\\right)^{1/p}.
 
     Parameters
     ----------
@@ -457,58 +175,24 @@ def minkowski(u, v, p=2, w=None):
         Input array.
     p : int
         The order of the norm of the difference :math:`{||u-v||}_p`.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
-    minkowski : double
+    d : double
         The Minkowski distance between vectors `u` and `v`.
-
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.minkowski([1, 0, 0], [0, 1, 0], 1)
-    2.0
-    >>> distance.minkowski([1, 0, 0], [0, 1, 0], 2)
-    1.4142135623730951
-    >>> distance.minkowski([1, 0, 0], [0, 1, 0], 3)
-    1.2599210498948732
-    >>> distance.minkowski([1, 1, 0], [0, 1, 0], 1)
-    1.0
-    >>> distance.minkowski([1, 1, 0], [0, 1, 0], 2)
-    1.0
-    >>> distance.minkowski([1, 1, 0], [0, 1, 0], 3)
-    1.0
 
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
     if p < 1:
         raise ValueError("p must be at least 1")
-    u_v = u - v
-    if w is not None:
-        w = _validate_weights(w)
-        if p == 1:
-            root_w = w
-        if p == 2:
-            # better precision and speed
-            root_w = np.sqrt(w)
-        else:
-            root_w = np.power(w, 1/p)
-        u_v = root_w * u_v
-    dist = norm(u_v, ord=p)
+    dist = norm(u - v, ord=p)
     return dist
 
 
-# `minkowski` gained weights in scipy 1.0.  Once we're at say version 1.3,
-# deprecated `wminkowski`.  Not done at once because it would be annoying for
-# downstream libraries that used `wminkowski` and support multiple scipy
-# versions.
 def wminkowski(u, v, p, w):
     """
-    Compute the weighted Minkowski distance between two 1-D arrays.
+    Computes the weighted Minkowski distance between two 1-D arrays.
 
     The weighted Minkowski distance between `u` and `v`, defined as
 
@@ -532,34 +216,17 @@ def wminkowski(u, v, p, w):
     wminkowski : double
         The weighted Minkowski distance between vectors `u` and `v`.
 
-    Notes
-    -----
-    `wminkowski` is DEPRECATED. It implements a definition where weights
-    are powered. It is recommended to use the weighted version of `minkowski`
-    instead. This function will be removed in a future version of scipy.
-
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.wminkowski([1, 0, 0], [0, 1, 0], 1, np.ones(3))
-    2.0
-    >>> distance.wminkowski([1, 0, 0], [0, 1, 0], 2, np.ones(3))
-    1.4142135623730951
-    >>> distance.wminkowski([1, 0, 0], [0, 1, 0], 3, np.ones(3))
-    1.2599210498948732
-    >>> distance.wminkowski([1, 1, 0], [0, 1, 0], 1, np.ones(3))
-    1.0
-    >>> distance.wminkowski([1, 1, 0], [0, 1, 0], 2, np.ones(3))
-    1.0
-    >>> distance.wminkowski([1, 1, 0], [0, 1, 0], 3, np.ones(3))
-    1.0
-
     """
-    w = _validate_weights(w)
-    return minkowski(u, v, p=p, w=w**p)
+    u = _validate_vector(u)
+    v = _validate_vector(v)
+    w = _validate_vector(w)
+    if p < 1:
+        raise ValueError("p must be at least 1")
+    dist = norm(w * (u - v), ord=p)
+    return dist
 
 
-def euclidean(u, v, w=None):
+def euclidean(u, v):
     """
     Computes the Euclidean distance between two 1-D arrays.
 
@@ -569,46 +236,35 @@ def euclidean(u, v, w=None):
 
        {||u-v||}_2
 
-       \\left(\\sum{(w_i |(u_i - v_i)|^2)}\\right)^{1/2}
-
     Parameters
     ----------
     u : (N,) array_like
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     euclidean : double
         The Euclidean distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.euclidean([1, 0, 0], [0, 1, 0])
-    1.4142135623730951
-    >>> distance.euclidean([1, 1, 0], [0, 1, 0])
-    1.0
-
     """
-    return minkowski(u, v, p=2, w=w)
+    u = _validate_vector(u)
+    v = _validate_vector(v)
+    dist = norm(u - v)
+    return dist
 
 
-def sqeuclidean(u, v, w=None):
+def sqeuclidean(u, v):
     """
-    Compute the squared Euclidean distance between two 1-D arrays.
+    Computes the squared Euclidean distance between two 1-D arrays.
 
     The squared Euclidean distance between `u` and `v` is defined as
 
     .. math::
 
-       {||u-v||}_2^2
+       {||u-v||}_2^2.
 
-       \\left(\\sum{(w_i |(u_i - v_i)|^2)}\\right)
 
     Parameters
     ----------
@@ -616,22 +272,11 @@ def sqeuclidean(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     sqeuclidean : double
         The squared Euclidean distance between vectors `u` and `v`.
-
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.sqeuclidean([1, 0, 0], [0, 1, 0])
-    2.0
-    >>> distance.sqeuclidean([1, 1, 0], [0, 1, 0])
-    1.0
 
     """
     # Preserve float dtypes, but convert everything else to np.float64
@@ -645,70 +290,20 @@ def sqeuclidean(u, v, w=None):
     u = _validate_vector(u, dtype=utype)
     v = _validate_vector(v, dtype=vtype)
     u_v = u - v
-    u_v_w = u_v  # only want weights applied once
-    if w is not None:
-        w = _validate_weights(w)
-        u_v_w = w * u_v
-    return np.dot(u_v, u_v_w)
+
+    return np.dot(u_v, u_v)
 
 
-def correlation(u, v, w=None, centered=True):
+def cosine(u, v):
     """
-    Compute the correlation distance between two 1-D arrays.
-
-    The correlation distance between `u` and `v`, is
-    defined as
-
-    .. math::
-
-        1 - \\frac{(u - \\bar{u}) \\cdot (v - \\bar{v})}
-                  {{||(u - \\bar{u})||}_2 {||(v - \\bar{v})||}_2}
-
-    where :math:`\\bar{u}` is the mean of the elements of `u`
-    and :math:`x \\cdot y` is the dot product of :math:`x` and :math:`y`.
-
-    Parameters
-    ----------
-    u : (N,) array_like
-        Input array.
-    v : (N,) array_like
-        Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
-
-    Returns
-    -------
-    correlation : double
-        The correlation distance between 1-D array `u` and `v`.
-
-    """
-    u = _validate_vector(u)
-    v = _validate_vector(v)
-    if w is not None:
-        w = _validate_weights(w)
-    if centered:
-        umu = np.average(u, weights=w)
-        vmu = np.average(v, weights=w)
-        u = u - umu
-        v = v - vmu
-    uv = np.average(u * v, weights=w)
-    uu = np.average(np.square(u), weights=w)
-    vv = np.average(np.square(v), weights=w)
-    dist = 1.0 - uv / np.sqrt(uu * vv)
-    return dist
-
-
-def cosine(u, v, w=None):
-    """
-    Compute the Cosine distance between 1-D arrays.
+    Computes the Cosine distance between 1-D arrays.
 
     The Cosine distance between `u` and `v`, is defined as
 
     .. math::
 
-        1 - \\frac{u \\cdot v}
-                  {||u||_2 ||v||_2}.
+       1 - \\frac{u \\cdot v}
+                {||u||_2 ||v||_2}.
 
     where :math:`u \\cdot v` is the dot product of :math:`u` and
     :math:`v`.
@@ -719,34 +314,60 @@ def cosine(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     cosine : double
         The Cosine distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.cosine([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.cosine([100, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.cosine([1, 1, 0], [0, 1, 0])
-    0.29289321881345254
+    """
+    u = _validate_vector(u)
+    v = _validate_vector(v)
+    dist = 1.0 - np.dot(u, v) / (norm(u) * norm(v))
+    return dist
+
+
+def correlation(u, v):
+    """
+    Computes the correlation distance between two 1-D arrays.
+
+    The correlation distance between `u` and `v`, is
+    defined as
+
+    .. math::
+
+       1 - \\frac{(u - \\bar{u}) \\cdot (v - \\bar{v})}
+               {{||(u - \\bar{u})||}_2 {||(v - \\bar{v})||}_2}
+
+    where :math:`\\bar{u}` is the mean of the elements of `u`
+    and :math:`x \\cdot y` is the dot product of :math:`x` and :math:`y`.
+
+    Parameters
+    ----------
+    u : (N,) array_like
+        Input array.
+    v : (N,) array_like
+        Input array.
+
+    Returns
+    -------
+    correlation : double
+        The correlation distance between 1-D array `u` and `v`.
 
     """
-    # cosine distance is also referred to as 'uncentered correlation',
-    #   or 'reflective correlation'
-    return correlation(u, v, w=w, centered=False)
+    u = _validate_vector(u)
+    v = _validate_vector(v)
+    umu = u.mean()
+    vmu = v.mean()
+    um = u - umu
+    vm = v - vmu
+    dist = 1.0 - np.dot(um, vm) / (norm(um) * norm(vm))
+    return dist
 
 
-def hamming(u, v, w=None):
+def hamming(u, v):
     """
-    Compute the Hamming distance between two 1-D arrays.
+    Computes the Hamming distance between two 1-D arrays.
 
     The Hamming distance between 1-D arrays `u` and `v`, is simply the
     proportion of disagreeing components in `u` and `v`. If `u` and `v` are
@@ -766,41 +387,23 @@ def hamming(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     hamming : double
         The Hamming distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.hamming([1, 0, 0], [0, 1, 0])
-    0.66666666666666663
-    >>> distance.hamming([1, 0, 0], [1, 1, 0])
-    0.33333333333333331
-    >>> distance.hamming([1, 0, 0], [2, 0, 0])
-    0.33333333333333331
-    >>> distance.hamming([1, 0, 0], [3, 0, 0])
-    0.33333333333333331
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
     if u.shape != v.shape:
         raise ValueError('The 1d arrays must have equal lengths.')
-    u_ne_v = u != v
-    if w is not None:
-        w = _validate_weights(w)
-    return np.average(u_ne_v, weights=w)
+    return (u != v).mean()
 
 
-def jaccard(u, v, w=None):
+def jaccard(u, v):
     """
-    Compute the Jaccard-Needham dissimilarity between two boolean 1-D arrays.
+    Computes the Jaccard-Needham dissimilarity between two boolean 1-D arrays.
 
     The Jaccard-Needham dissimilarity between 1-D boolean arrays `u` and `v`,
     is defined as
@@ -820,43 +423,24 @@ def jaccard(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     jaccard : double
         The Jaccard distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.jaccard([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.jaccard([1, 0, 0], [1, 1, 0])
-    0.5
-    >>> distance.jaccard([1, 0, 0], [1, 2, 0])
-    0.5
-    >>> distance.jaccard([1, 0, 0], [1, 1, 1])
-    0.66666666666666663
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    nonzero = np.bitwise_or(u != 0, v != 0)
-    unequal_nonzero = np.bitwise_and((u != v), nonzero)
-    if w is not None:
-        w = _validate_weights(w)
-        nonzero = w * nonzero
-        unequal_nonzero = w * unequal_nonzero
-    dist = np.double(unequal_nonzero.sum()) / np.double(nonzero.sum())
+    dist = (np.double(np.bitwise_and((u != v),
+                                     np.bitwise_or(u != 0, v != 0)).sum())
+            / np.double(np.bitwise_or(u != 0, v != 0).sum()))
     return dist
 
 
-def kulsinski(u, v, w=None):
+def kulsinski(u, v):
     """
-    Compute the Kulsinski dissimilarity between two boolean 1-D arrays.
+    Computes the Kulsinski dissimilarity between two boolean 1-D arrays.
 
     The Kulsinski dissimilarity between two boolean 1-D arrays `u` and `v`,
     is defined as
@@ -876,43 +460,24 @@ def kulsinski(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     kulsinski : double
         The Kulsinski distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.kulsinski([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.kulsinski([1, 0, 0], [1, 1, 0])
-    0.75
-    >>> distance.kulsinski([1, 0, 0], [2, 1, 0])
-    0.33333333333333331
-    >>> distance.kulsinski([1, 0, 0], [3, 1, 0])
-    -0.5
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if w is None:
-        n = float(len(u))
-    else:
-        w = _validate_weights(w)
-        n = w.sum()
-    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v, w=w)
+    n = float(len(u))
+    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v)
 
     return (ntf + nft - ntt + n) / (ntf + nft + n)
 
 
 def seuclidean(u, v, V):
     """
-    Return the standardized Euclidean distance between two 1-D arrays.
+    Returns the standardized Euclidean distance between two 1-D arrays.
 
     The standardized Euclidean distance between `u` and `v`.
 
@@ -931,16 +496,6 @@ def seuclidean(u, v, V):
     seuclidean : double
         The standardized Euclidean distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.seuclidean([1, 0, 0], [0, 1, 0], [0.1, 0.1, 0.1])
-    4.4721359549995796
-    >>> distance.seuclidean([1, 0, 0], [0, 1, 0], [1, 0.1, 0.1])
-    3.3166247903553998
-    >>> distance.seuclidean([1, 0, 0], [0, 1, 0], [10, 0.1, 0.1])
-    3.1780497164141406
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
@@ -948,12 +503,12 @@ def seuclidean(u, v, V):
     if V.shape[0] != u.shape[0] or u.shape[0] != v.shape[0]:
         raise TypeError('V must be a 1-D array of the same dimension '
                         'as u and v.')
-    return euclidean(u, v, w=1/V)
+    return np.sqrt(((u - v) ** 2 / V).sum())
 
 
-def cityblock(u, v, w=None):
+def cityblock(u, v):
     """
-    Compute the City Block (Manhattan) distance.
+    Computes the City Block (Manhattan) distance.
 
     Computes the Manhattan distance between two 1-D arrays `u` and `v`,
     which is defined as
@@ -968,38 +523,21 @@ def cityblock(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     cityblock : double
         The City Block (Manhattan) distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.cityblock([1, 0, 0], [0, 1, 0])
-    2
-    >>> distance.cityblock([1, 0, 0], [0, 2, 0])
-    3
-    >>> distance.cityblock([1, 0, 0], [1, 1, 0])
-    1
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    l1_diff = abs(u - v)
-    if w is not None:
-        w = _validate_weights(w)
-        l1_diff = w * l1_diff
-    return l1_diff.sum()
+    return abs(u - v).sum()
 
 
 def mahalanobis(u, v, VI):
     """
-    Compute the Mahalanobis distance between two 1-D arrays.
+    Computes the Mahalanobis distance between two 1-D arrays.
 
     The Mahalanobis distance between 1-D arrays `u` and `v`, is defined as
 
@@ -1024,17 +562,6 @@ def mahalanobis(u, v, VI):
     mahalanobis : double
         The Mahalanobis distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> iv = [[1, 0.5, 0.5], [0.5, 1, 0.5], [0.5, 0.5, 1]]
-    >>> distance.mahalanobis([1, 0, 0], [0, 1, 0], iv)
-    1.0
-    >>> distance.mahalanobis([0, 2, 0], [0, 1, 0], iv)
-    1.0
-    >>> distance.mahalanobis([2, 0, 0], [0, 1, 0], iv)
-    1.7320508075688772
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
@@ -1044,9 +571,9 @@ def mahalanobis(u, v, VI):
     return np.sqrt(m)
 
 
-def chebyshev(u, v, w=None):
+def chebyshev(u, v):
     """
-    Compute the Chebyshev distance.
+    Computes the Chebyshev distance.
 
     Computes the Chebyshev distance between two 1-D arrays `u` and `v`,
     which is defined as
@@ -1061,38 +588,21 @@ def chebyshev(u, v, w=None):
         Input vector.
     v : (N,) array_like
         Input vector.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     chebyshev : double
         The Chebyshev distance between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.chebyshev([1, 0, 0], [0, 1, 0])
-    1
-    >>> distance.chebyshev([1, 1, 0], [0, 1, 0])
-    1
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if w is not None:
-        w = _validate_weights(w)
-        has_weight = w > 0
-        if has_weight.sum() < w.size:
-            u = u[has_weight]
-            v = v[has_weight]
     return max(abs(u - v))
 
 
-def braycurtis(u, v, w=None):
+def braycurtis(u, v):
     """
-    Compute the Bray-Curtis distance between two 1-D arrays.
+    Computes the Bray-Curtis distance between two 1-D arrays.
 
     Bray-Curtis distance is defined as
 
@@ -1109,38 +619,21 @@ def braycurtis(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     braycurtis : double
         The Bray-Curtis distance between 1-D arrays `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.braycurtis([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.braycurtis([1, 1, 0], [0, 1, 0])
-    0.33333333333333331
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v, dtype=np.float64)
-    l1_diff = abs(u - v)
-    l1_sum = abs(u + v)
-    if w is not None:
-        w = _validate_weights(w)
-        l1_diff = w * l1_diff
-        l1_sum = w * l1_sum
-    return l1_diff.sum() / l1_sum.sum()
+    return abs(u - v).sum() / abs(u + v).sum()
 
 
-def canberra(u, v, w=None):
+def canberra(u, v):
     """
-    Compute the Canberra distance between two 1-D arrays.
+    Computes the Canberra distance between two 1-D arrays.
 
     The Canberra distance is defined as
 
@@ -1155,9 +648,6 @@ def canberra(u, v, w=None):
         Input array.
     v : (N,) array_like
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
@@ -1169,36 +659,58 @@ def canberra(u, v, w=None):
     When `u[i]` and `v[i]` are 0 for given i, then the fraction 0/0 = 0 is
     used in the calculation.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.canberra([1, 0, 0], [0, 1, 0])
-    2.0
-    >>> distance.canberra([1, 1, 0], [0, 1, 0])
-    1.0
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v, dtype=np.float64)
-    if w is not None:
-        w = _validate_weights(w)
     olderr = np.seterr(invalid='ignore')
     try:
-        abs_uv = abs(u - v)
-        abs_u = abs(u)
-        abs_v = abs(v)
-        d = abs_uv / (abs_u + abs_v)
-        if w is not None:
-            d = w * d
-        d = np.nansum(d)
+        d = np.nansum(abs(u - v) / (abs(u) + abs(v)))
     finally:
         np.seterr(**olderr)
     return d
 
 
-def yule(u, v, w=None):
+def _nbool_correspond_all(u, v):
+    if u.dtype != v.dtype:
+        raise TypeError("Arrays being compared must be of the same data type.")
+
+    if u.dtype == int or u.dtype == np.float_ or u.dtype == np.double:
+        not_u = 1.0 - u
+        not_v = 1.0 - v
+        nff = (not_u * not_v).sum()
+        nft = (not_u * v).sum()
+        ntf = (u * not_v).sum()
+        ntt = (u * v).sum()
+    elif u.dtype == bool:
+        not_u = ~u
+        not_v = ~v
+        nff = (not_u & not_v).sum()
+        nft = (not_u & v).sum()
+        ntf = (u & not_v).sum()
+        ntt = (u & v).sum()
+    else:
+        raise TypeError("Arrays being compared have unknown type.")
+
+    return (nff, nft, ntf, ntt)
+
+
+def _nbool_correspond_ft_tf(u, v):
+    if u.dtype == int or u.dtype == np.float_ or u.dtype == np.double:
+        not_u = 1.0 - u
+        not_v = 1.0 - v
+        nft = (not_u * v).sum()
+        ntf = (u * not_v).sum()
+    else:
+        not_u = ~u
+        not_v = ~v
+        nft = (not_u & v).sum()
+        ntf = (u & not_v).sum()
+    return (nft, ntf)
+
+
+def yule(u, v):
     """
-    Compute the Yule dissimilarity between two boolean 1-D arrays.
+    Computes the Yule dissimilarity between two boolean 1-D arrays.
 
     The Yule dissimilarity is defined as
 
@@ -1216,45 +728,31 @@ def yule(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     yule : double
         The Yule dissimilarity between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.yule([1, 0, 0], [0, 1, 0])
-    2.0
-    >>> distance.yule([1, 1, 0], [0, 1, 0])
-    0.0
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if w is not None:
-        w = _validate_weights(w)
-    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v, w=w)
-    return float(2.0 * ntf * nft / np.array(ntt * nff + ntf * nft))
+    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v)
+    return float(2.0 * ntf * nft) / float(ntt * nff + ntf * nft)
 
-@np.deprecate(message="spatial.distance.matching is deprecated in scipy 1.0.0; "
-                      "use spatial.distance.hamming instead.")
-def matching(u, v, w=None):
+
+def matching(u, v):
     """
-    Compute the Hamming distance between two boolean 1-D arrays.
+    Computes the Hamming distance between two boolean 1-D arrays.
 
     This is a deprecated synonym for :func:`hamming`.
     """
-    return hamming(u, v, w=w)
+    return hamming(u, v)
 
 
-def dice(u, v, w=None):
+def dice(u, v):
     """
-    Compute the Dice dissimilarity between two boolean 1-D arrays.
+    Computes the Dice dissimilarity between two boolean 1-D arrays.
 
     The Dice dissimilarity between `u` and `v`, is
 
@@ -1273,47 +771,26 @@ def dice(u, v, w=None):
         Input 1-D array.
     v : (N,) ndarray, bool
         Input 1-D array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     dice : double
         The Dice dissimilarity between 1-D arrays `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.dice([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.dice([1, 0, 0], [1, 1, 0])
-    0.3333333333333333
-    >>> distance.dice([1, 0, 0], [2, 0, 0])
-    -0.3333333333333333
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if w is not None:
-        w = _validate_weights(w)
-    if u.dtype == v.dtype == bool and w is None:
+    if u.dtype == bool:
         ntt = (u & v).sum()
     else:
-        dtype = np.find_common_type([int], [u.dtype, v.dtype])
-        u = u.astype(dtype)
-        v = v.astype(dtype)
-        if w is None:
-            ntt = (u * v).sum()
-        else:
-            ntt = (u * v * w).sum()
-    (nft, ntf) = _nbool_correspond_ft_tf(u, v, w=w)
-    return float((ntf + nft) / np.array(2.0 * ntt + ntf + nft))
+        ntt = (u * v).sum()
+    (nft, ntf) = _nbool_correspond_ft_tf(u, v)
+    return float(ntf + nft) / float(2.0 * ntt + ntf + nft)
 
 
-def rogerstanimoto(u, v, w=None):
+def rogerstanimoto(u, v):
     """
-    Compute the Rogers-Tanimoto dissimilarity between two boolean 1-D arrays.
+    Computes the Rogers-Tanimoto dissimilarity between two boolean 1-D arrays.
 
     The Rogers-Tanimoto dissimilarity between two boolean 1-D arrays
     `u` and `v`, is defined as
@@ -1332,9 +809,6 @@ def rogerstanimoto(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
@@ -1342,28 +816,16 @@ def rogerstanimoto(u, v, w=None):
         The Rogers-Tanimoto dissimilarity between vectors
         `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.rogerstanimoto([1, 0, 0], [0, 1, 0])
-    0.8
-    >>> distance.rogerstanimoto([1, 0, 0], [1, 1, 0])
-    0.5
-    >>> distance.rogerstanimoto([1, 0, 0], [2, 0, 0])
-    -1.0
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if w is not None:
-        w = _validate_weights(w)
-    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v, w=w)
+    (nff, nft, ntf, ntt) = _nbool_correspond_all(u, v)
     return float(2.0 * (ntf + nft)) / float(ntt + nff + (2.0 * (ntf + nft)))
 
 
-def russellrao(u, v, w=None):
+def russellrao(u, v):
     """
-    Compute the Russell-Rao dissimilarity between two boolean 1-D arrays.
+    Computes the Russell-Rao dissimilarity between two boolean 1-D arrays.
 
     The Russell-Rao dissimilarity between two boolean 1-D arrays, `u` and
     `v`, is defined as
@@ -1383,44 +845,25 @@ def russellrao(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     russellrao : double
         The Russell-Rao dissimilarity between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.russellrao([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.russellrao([1, 0, 0], [1, 1, 0])
-    0.6666666666666666
-    >>> distance.russellrao([1, 0, 0], [2, 0, 0])
-    0.3333333333333333
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if u.dtype == v.dtype == bool and w is None:
+    if u.dtype == bool:
         ntt = (u & v).sum()
-        n = float(len(u))
-    elif w is None:
-        ntt = (u * v).sum()
-        n = float(len(u))
     else:
-        w = _validate_weights(w)
-        ntt = (u * v * w).sum()
-        n = w.sum()
-    return float(n - ntt) / n
+        ntt = (u * v).sum()
+    return float(len(u) - ntt) / float(len(u))
 
 
-def sokalmichener(u, v, w=None):
+def sokalmichener(u, v):
     """
-    Compute the Sokal-Michener dissimilarity between two boolean 1-D arrays.
+    Computes the Sokal-Michener dissimilarity between two boolean 1-D arrays.
 
     The Sokal-Michener dissimilarity between boolean 1-D arrays `u` and `v`,
     is defined as
@@ -1441,45 +884,28 @@ def sokalmichener(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     sokalmichener : double
         The Sokal-Michener dissimilarity between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.sokalmichener([1, 0, 0], [0, 1, 0])
-    0.8
-    >>> distance.sokalmichener([1, 0, 0], [1, 1, 0])
-    0.5
-    >>> distance.sokalmichener([1, 0, 0], [2, 0, 0])
-    -1.0
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if u.dtype == v.dtype == bool and w is None:
+    if u.dtype == bool:
         ntt = (u & v).sum()
         nff = (~u & ~v).sum()
-    elif w is None:
+    else:
         ntt = (u * v).sum()
         nff = ((1.0 - u) * (1.0 - v)).sum()
-    else:
-        w = _validate_weights(w)
-        ntt = (u * v * w).sum()
-        nff = ((1.0 - u) * (1.0 - v) * w).sum()
     (nft, ntf) = _nbool_correspond_ft_tf(u, v)
     return float(2.0 * (ntf + nft)) / float(ntt + nff + 2.0 * (ntf + nft))
 
 
-def sokalsneath(u, v, w=None):
+def sokalsneath(u, v):
     """
-    Compute the Sokal-Sneath dissimilarity between two boolean 1-D arrays.
+    Computes the Sokal-Sneath dissimilarity between two boolean 1-D arrays.
 
     The Sokal-Sneath dissimilarity between `u` and `v`,
 
@@ -1498,179 +924,60 @@ def sokalsneath(u, v, w=None):
         Input array.
     v : (N,) array_like, bool
         Input array.
-    w : (N,) array_like, optional
-        The weights for each value in `u` and `v`. Default is None,
-        which gives each value a weight of 1.0
 
     Returns
     -------
     sokalsneath : double
         The Sokal-Sneath dissimilarity between vectors `u` and `v`.
 
-    Examples
-    --------
-    >>> from scipy.spatial import distance
-    >>> distance.sokalsneath([1, 0, 0], [0, 1, 0])
-    1.0
-    >>> distance.sokalsneath([1, 0, 0], [1, 1, 0])
-    0.66666666666666663
-    >>> distance.sokalsneath([1, 0, 0], [2, 1, 0])
-    0.0
-    >>> distance.sokalsneath([1, 0, 0], [3, 1, 0])
-    -2.0
-
     """
     u = _validate_vector(u)
     v = _validate_vector(v)
-    if u.dtype == v.dtype == bool and w is None:
+    if u.dtype == bool:
         ntt = (u & v).sum()
-    elif w is None:
-        ntt = (u * v).sum()
     else:
-        w = _validate_weights(w)
-        ntt = (u * v * w).sum()
-    (nft, ntf) = _nbool_correspond_ft_tf(u, v, w=w)
-    denom = np.array(ntt + 2.0 * (ntf + nft))
-    if not denom.any():
+        ntt = (u * v).sum()
+    (nft, ntf) = _nbool_correspond_ft_tf(u, v)
+    denom = ntt + 2.0 * (ntf + nft)
+    if denom == 0:
         raise ValueError('Sokal-Sneath dissimilarity is not defined for '
-                         'vectors that are entirely false.')
+                            'vectors that are entirely false.')
     return float(2.0 * (ntf + nft)) / denom
 
 
-_convert_to_double = partial(_convert_to_type, out_type=np.double)
-_convert_to_bool = partial(_convert_to_type, out_type=bool)
+# Registry of "simple" distance metrics' pdist and cdist implementations,
+# meaning the ones that accept one dtype and have no additional arguments.
+_SIMPLE_CDIST = {}
+_SIMPLE_PDIST = {}
 
-# adding python-only wrappers to _distance_wrap module
-_distance_wrap.pdist_correlation_double_wrap = _correlation_pdist_wrap
-_distance_wrap.cdist_correlation_double_wrap = _correlation_cdist_wrap
+for names, wrap_name in [
+    (['braycurtis'], "bray_curtis"),
+    (['canberra'], "canberra"),
+    (['chebychev', 'chebyshev', 'cheby', 'cheb', 'ch'], "chebyshev"),
+    (["cityblock", "cblock", "cb", "c"], "city_block"),
+    (["euclidean", "euclid", "eu", "e"], "euclidean"),
+    (["sqeuclidean", "sqe", "sqeuclid"], "sqeuclidean"),
+]:
+    cdist_fn = getattr(_distance_wrap, "cdist_%s_wrap" % wrap_name)
+    pdist_fn = getattr(_distance_wrap, "pdist_%s_wrap" % wrap_name)
+    for name in names:
+        _SIMPLE_CDIST[name] = _convert_to_double, cdist_fn
+        _SIMPLE_PDIST[name] = _convert_to_double, pdist_fn
 
-# Registry of implemented metrics:
-# Dictionary with the following structure:
-# {
-#  metric_name : MetricInfo(aka, types=[double], validator=None)
-# }
-#
-# Where:
-# `metric_name` must be equal to python metric name
-#
-# MetricInfo is a named tuple with fields:
-#  'aka' : [list of aliases],
-#
-#  'validator': f(X, m, n, **kwargs)    # function that check kwargs and
-#                                       # computes default values.
-#
-#  'types': [list of supported types],  # X (pdist) and XA (cdist) are used to
-#                                       # choose the type. if there is no match
-#                                       # the first type is used. Default double
-#}
-MetricInfo = namedtuple("MetricInfo", 'aka types validator ')
-MetricInfo.__new__.__defaults__ = (['double'], None)
+for name in ["dice", "kulsinski", "matching", "rogerstanimoto", "russellrao",
+             "sokalmichener", "sokalsneath", "yule"]:
+    wrap_name = "hamming" if name == "matching" else name
 
-_METRICS = {
-    'braycurtis': MetricInfo(aka=['braycurtis']),
-    'canberra': MetricInfo(aka=['canberra']),
-    'chebyshev': MetricInfo(aka=['chebychev', 'chebyshev', 'cheby', 'cheb', 'ch']),
-    'cityblock': MetricInfo(aka=['cityblock', 'cblock', 'cb', 'c']),
-    'correlation': MetricInfo(aka=['correlation', 'co']),
-    'cosine': MetricInfo(aka=['cosine', 'cos']),
-    'dice': MetricInfo(aka=['dice'], types=['bool']),
-    'euclidean': MetricInfo(aka=['euclidean', 'euclid', 'eu', 'e']),
-    'hamming': MetricInfo(aka=['matching', 'hamming', 'hamm', 'ha', 'h'],
-                          types=['double', 'bool']),
-    'jaccard': MetricInfo(aka=['jaccard', 'jacc', 'ja', 'j'],
-                          types=['double', 'bool']),
-    'kulsinski': MetricInfo(aka=['kulsinski'], types=['bool']),
-    'mahalanobis': MetricInfo(aka=['mahalanobis', 'mahal', 'mah'],
-                              validator=_validate_mahalanobis_kwargs),
-    'minkowski': MetricInfo(aka=['minkowski', 'mi', 'm', 'pnorm'],
-                            validator=_validate_minkowski_kwargs),
-    'rogerstanimoto': MetricInfo(aka=['rogerstanimoto'], types=['bool']),
-    'russellrao': MetricInfo(aka=['russellrao'], types=['bool']),
-    'seuclidean': MetricInfo(aka=['seuclidean', 'se', 's'],
-                             validator=_validate_seuclidean_kwargs),
-    'sokalmichener': MetricInfo(aka=['sokalmichener'], types=['bool']),
-    'sokalsneath': MetricInfo(aka=['sokalsneath'], types=['bool']),
-    'sqeuclidean': MetricInfo(aka=['sqeuclidean', 'sqe', 'sqeuclid']),
-    'wminkowski': MetricInfo(aka=['wminkowski', 'wmi', 'wm', 'wpnorm'],
-                             validator=_validate_wminkowski_kwargs),
-    'yule': MetricInfo(aka=['yule'], types=['bool']),
-    }
+    cdist_fn = getattr(_distance_wrap, "cdist_%s_bool_wrap" % wrap_name)
+    _SIMPLE_CDIST[name] = _convert_to_bool, cdist_fn
+
+    pdist_fn = getattr(_distance_wrap, "pdist_%s_bool_wrap" % wrap_name)
+    _SIMPLE_PDIST[name] = _convert_to_bool, pdist_fn
 
 
-_METRIC_ALIAS = dict((alias, name)
-                     for name, info in _METRICS.items()
-                     for alias in info.aka)
-
-_METRICS_NAMES = list(_METRICS.keys())
-
-_TEST_METRICS = {'test_' + name: globals()[name] for name in _METRICS.keys()}
-
-
-def pdist(X, metric='euclidean', *args, **kwargs):
+def pdist(X, metric='euclidean', p=2, w=None, V=None, VI=None):
     """
     Pairwise distances between observations in n-dimensional space.
-
-    See Notes for common calling conventions.
-
-    Parameters
-    ----------
-    X : ndarray
-        An m by n array of m original observations in an
-        n-dimensional space.
-    metric : str or function, optional
-        The distance metric to use. The distance function can
-        be 'braycurtis', 'canberra', 'chebyshev', 'cityblock',
-        'correlation', 'cosine', 'dice', 'euclidean', 'hamming',
-        'jaccard', 'kulsinski', 'mahalanobis', 'matching',
-        'minkowski', 'rogerstanimoto', 'russellrao', 'seuclidean',
-        'sokalmichener', 'sokalsneath', 'sqeuclidean', 'yule'.
-    *args : tuple. Deprecated.
-        Additional arguments should be passed as keyword arguments
-    **kwargs : dict, optional
-        Extra arguments to `metric`: refer to each metric documentation for a
-        list of all possible arguments.
-
-        Some possible arguments:
-
-        p : scalar
-        The p-norm to apply for Minkowski, weighted and unweighted.
-        Default: 2.
-
-        w : ndarray
-        The weight vector for metrics that support weights (e.g., Minkowski).
-
-        V : ndarray
-        The variance vector for standardized Euclidean.
-        Default: var(X, axis=0, ddof=1)
-
-        VI : ndarray
-        The inverse of the covariance matrix for Mahalanobis.
-        Default: inv(cov(X.T)).T
-
-        out : ndarray.
-        The output array
-        If not None, condensed distance matrix Y is stored in this array.
-        Note: metric independent, it will become a regular keyword arg in a
-        future scipy version
-
-    Returns
-    -------
-    Y : ndarray
-        Returns a condensed distance matrix Y.  For
-        each :math:`i` and :math:`j` (where :math:`i<j<m`),where m is the number
-        of original observations. The metric ``dist(u=X[i], v=X[j])``
-        is computed and stored in entry ``ij``.
-
-    See Also
-    --------
-    squareform : converts between condensed distance matrices and
-                 square distance matrices.
-
-    Notes
-    -----
-    See ``squareform`` for information on how to calculate the index of
-    this entry or to convert the condensed distance matrix to a
-    redundant square matrix.
 
     The following are common calling conventions.
 
@@ -1680,7 +987,7 @@ def pdist(X, metric='euclidean', *args, **kwargs):
        (2-norm) as the distance metric between the points. The points
        are arranged as m n-dimensional row vectors in the matrix X.
 
-    2. ``Y = pdist(X, 'minkowski', p=2.)``
+    2. ``Y = pdist(X, 'minkowski', p)``
 
        Computes the distances using the Minkowski distance
        :math:`||u-v||_p` (p-norm) where :math:`p \\geq 1`.
@@ -1777,14 +1084,14 @@ def pdist(X, metric='euclidean', *args, **kwargs):
 
        .. math::
 
-            d(u,v) = \\frac{\\sum_i {|u_i-v_i|}}
-                           {\\sum_i {|u_i+v_i|}}
+            d(u,v) = \\frac{\\sum_i {u_i-v_i}}
+                          {\\sum_i {u_i+v_i}}
 
     13. ``Y = pdist(X, 'mahalanobis', VI=None)``
 
        Computes the Mahalanobis distance between the points. The
        Mahalanobis distance between two points ``u`` and ``v`` is
-       :math:`\\sqrt{(u-v)(1/V)(u-v)^T}` where :math:`(1/V)` (the ``VI``
+       :math:`(u-v)(1/V)(u-v)^T` where :math:`(1/V)` (the ``VI``
        variable) is the inverse covariance. If ``VI`` is not None,
        ``VI`` will be used as the inverse covariance matrix.
 
@@ -1827,7 +1134,7 @@ def pdist(X, metric='euclidean', *args, **kwargs):
        Computes the Sokal-Sneath distance between each pair of
        boolean vectors. (see sokalsneath function documentation)
 
-    22. ``Y = pdist(X, 'wminkowski', p=2, w=w)``
+    22. ``Y = pdist(X, 'wminkowski')``
 
        Computes the weighted Minkowski distance between each pair of
        vectors. (see wminkowski function documentation)
@@ -1854,98 +1161,150 @@ def pdist(X, metric='euclidean', *args, **kwargs):
 
          dm = pdist(X, 'sokalsneath')
 
+    Parameters
+    ----------
+    X : ndarray
+        An m by n array of m original observations in an
+        n-dimensional space.
+    metric : str or function, optional
+        The distance metric to use. The distance function can
+        be 'braycurtis', 'canberra', 'chebyshev', 'cityblock',
+        'correlation', 'cosine', 'dice', 'euclidean', 'hamming',
+        'jaccard', 'kulsinski', 'mahalanobis', 'matching',
+        'minkowski', 'rogerstanimoto', 'russellrao', 'seuclidean',
+        'sokalmichener', 'sokalsneath', 'sqeuclidean', 'yule'.
+    w : ndarray, optional
+        The weight vector (for weighted Minkowski).
+    p : double, optional
+        The p-norm to apply (for Minkowski, weighted and unweighted)
+    V : ndarray, optional
+        The variance vector (for standardized Euclidean).
+    VI : ndarray, optional
+        The inverse of the covariance matrix (for Mahalanobis).
+
+    Returns
+    -------
+    Y : ndarray
+        Returns a condensed distance matrix Y.  For
+        each :math:`i` and :math:`j` (where :math:`i<j<n`), the
+        metric ``dist(u=X[i], v=X[j])`` is computed and stored in entry ``ij``.
+
+    See Also
+    --------
+    squareform : converts between condensed distance matrices and
+                 square distance matrices.
+
+    Notes
+    -----
+    See ``squareform`` for information on how to calculate the index of
+    this entry or to convert the condensed distance matrix to a
+    redundant square matrix.
+
     """
     # You can also call this as:
     #     Y = pdist(X, 'test_abc')
     # where 'abc' is the metric being tested.  This computes the distance
-    # between all pairs of vectors in X using the distance metric 'abc' but
-    # with a more succinct, verifiable, but less efficient implementation.
-
-    X = _asarray_validated(X, sparse_ok=False, objects_ok=True, mask_ok=True,
-                           check_finite=False)
-    kwargs = _args_to_kwargs_xdist(args, kwargs, metric, "pdist")
+    # between all pairs of vectors in X using the distance metric 'abc' but with
+    # a more succinct, verifiable, but less efficient implementation.
 
     X = np.asarray(X, order='c')
+
+    # The C code doesn't do striding.
+    X = _copy_array_if_base_present(X)
 
     s = X.shape
     if len(s) != 2:
         raise ValueError('A 2-dimensional array must be passed.')
 
     m, n = s
-    out = kwargs.pop("out", None)
-    if out is None:
-        dm = np.empty((m * (m - 1)) // 2, dtype=np.double)
-    else:
-        if out.shape != (m * (m - 1) // 2,):
-            raise ValueError("output array has incorrect shape.")
-        if not out.flags.c_contiguous:
-            raise ValueError("Output array must be C-contiguous.")
-        if out.dtype != np.double:
-            raise ValueError("Output array must be double type.")
-        dm = out
+    dm = np.zeros((m * (m - 1)) // 2, dtype=np.double)
 
-    # compute blacklist for deprecated kwargs
-    if(metric in _METRICS['minkowski'].aka or
-       metric in _METRICS['wminkowski'].aka or
-       metric in ['test_minkowski', 'test_wminkowski'] or
-       metric in [minkowski, wminkowski]):
-        kwargs_blacklist = ["V", "VI"]
-    elif(metric in _METRICS['seuclidean'].aka or
-         metric == 'test_seuclidean' or metric == seuclidean):
-        kwargs_blacklist = ["p", "w", "VI"]
-    elif(metric in _METRICS['mahalanobis'].aka or
-         metric == 'test_mahalanobis' or metric == mahalanobis):
-        kwargs_blacklist = ["p", "w", "V"]
-    else:
-        kwargs_blacklist = ["p", "V", "VI"]
-
-    _filter_deprecated_kwargs(kwargs, kwargs_blacklist)
+    wmink_names = ['wminkowski', 'wmi', 'wm', 'wpnorm']
+    if w is None and (metric == wminkowski or metric in wmink_names):
+        raise ValueError('weighted minkowski requires a weight '
+                            'vector `w` to be given.')
 
     if callable(metric):
-        mstr = getattr(metric, '__name__', 'UnknownCustomMetric')
-        metric_name = _METRIC_ALIAS.get(mstr, None)
+        if metric == minkowski:
+            def dfun(u, v):
+                return minkowski(u, v, p)
+        elif metric == wminkowski:
+            def dfun(u, v):
+                return wminkowski(u, v, p, w)
+        elif metric == seuclidean:
+            def dfun(u, v):
+                return seuclidean(u, v, V)
+        elif metric == mahalanobis:
+            def dfun(u, v):
+                return mahalanobis(u, v, V)
+        else:
+            dfun = metric
 
-        if metric_name is not None:
-            X, typ, kwargs = _validate_pdist_input(X, m, n,
-                                                   metric_name, **kwargs)
+        X = _convert_to_double(X)
 
         k = 0
         for i in xrange(0, m - 1):
             for j in xrange(i + 1, m):
-                dm[k] = metric(X[i], X[j], **kwargs)
+                dm[k] = dfun(X[i], X[j])
                 k = k + 1
 
     elif isinstance(metric, string_types):
         mstr = metric.lower()
 
-        # NOTE: C-version still does not support weights
-        if "w" in kwargs and not mstr.startswith("test_"):
-            if(mstr in _METRICS['seuclidean'].aka or
-               mstr in _METRICS['mahalanobis'].aka):
-                raise ValueError("metric %s incompatible with weights" % mstr)
-            # need to use python version for weighting
-            kwargs['out'] = out
-            mstr = "test_%s" % mstr
-
-        metric_name = _METRIC_ALIAS.get(mstr, None)
-
-        if metric_name is not None:
-            X, typ, kwargs = _validate_pdist_input(X, m, n,
-                                                   metric_name, **kwargs)
-
-            # get pdist wrapper
-            pdist_fn = getattr(_distance_wrap,
-                               "pdist_%s_%s_wrap" % (metric_name, typ))
-            pdist_fn(X, dm, **kwargs)
+        try:
+            validate, pdist_fn = _SIMPLE_PDIST[mstr]
+            X = validate(X)
+            pdist_fn(X, dm)
             return dm
+        except KeyError:
+            pass
 
-        elif mstr in ['old_cosine', 'old_cos']:
-            warnings.warn('"old_cosine" is deprecated and will be removed in '
-                          'a future version. Use "cosine" instead.',
-                          DeprecationWarning)
+        if mstr in ['hamming', 'hamm', 'ha', 'h']:
+            if X.dtype == bool:
+                X = _convert_to_bool(X)
+                _distance_wrap.pdist_hamming_bool_wrap(X, dm)
+            else:
+                X = _convert_to_double(X)
+                _distance_wrap.pdist_hamming_wrap(X, dm)
+        elif mstr in ['jaccard', 'jacc', 'ja', 'j']:
+            if X.dtype == bool:
+                X = _convert_to_bool(X)
+                _distance_wrap.pdist_jaccard_bool_wrap(X, dm)
+            else:
+                X = _convert_to_double(X)
+                _distance_wrap.pdist_jaccard_wrap(X, dm)
+        elif mstr in ['minkowski', 'mi', 'm']:
             X = _convert_to_double(X)
-            norms = np.einsum('ij,ij->i', X, X, dtype=np.double)
-            np.sqrt(norms, out=norms)
+            _distance_wrap.pdist_minkowski_wrap(X, dm, p)
+        elif mstr in wmink_names:
+            X = _convert_to_double(X)
+            w = _convert_to_double(np.asarray(w))
+            _distance_wrap.pdist_weighted_minkowski_wrap(X, dm, p, w)
+        elif mstr in ['seuclidean', 'se', 's']:
+            X = _convert_to_double(X)
+            if V is not None:
+                V = np.asarray(V, order='c')
+                if V.dtype != np.double:
+                    raise TypeError('Variance vector V must contain doubles.')
+                if len(V.shape) != 1:
+                    raise ValueError('Variance vector V must '
+                                     'be one-dimensional.')
+                if V.shape[0] != n:
+                    raise ValueError('Variance vector V must be of the same '
+                            'dimension as the vectors on which the distances '
+                            'are computed.')
+                # The C code doesn't do striding.
+                VV = _copy_array_if_base_present(_convert_to_double(V))
+            else:
+                VV = np.var(X, axis=0, ddof=1)
+            _distance_wrap.pdist_seuclidean_wrap(X, VV, dm)
+        elif mstr in ['cosine', 'cos']:
+            X = _convert_to_double(X)
+            norms = _row_norms(X)
+            _distance_wrap.pdist_cosine_wrap(X, dm, norms)
+        elif mstr in ['old_cosine', 'old_cos']:
+            X = _convert_to_double(X)
+            norms = _row_norms(X)
             nV = norms.reshape(m, 1)
             # The numerator u * v
             nm = np.dot(X, X.T)
@@ -1954,11 +1313,82 @@ def pdist(X, metric='euclidean', *args, **kwargs):
             dm = 1.0 - (nm / de)
             dm[xrange(0, m), xrange(0, m)] = 0.0
             dm = squareform(dm)
-        elif mstr.startswith("test_"):
-            if mstr in _TEST_METRICS:
-                dm = pdist(X, _TEST_METRICS[mstr], **kwargs)
+        elif mstr in ['correlation', 'co']:
+            X = _convert_to_double(X)
+            X2 = X - X.mean(1)[:, np.newaxis]
+            norms = _row_norms(X2)
+            _distance_wrap.pdist_cosine_wrap(X2, dm, norms)
+        elif mstr in ['mahalanobis', 'mahal', 'mah']:
+            X = _convert_to_double(X)
+            if VI is not None:
+                VI = _convert_to_double(np.asarray(VI, order='c'))
+                VI = _copy_array_if_base_present(VI)
             else:
-                raise ValueError('Unknown "Test" Distance Metric: %s' % mstr[5:])
+                if m <= n:
+                    # There are fewer observations than the dimension of
+                    # the observations.
+                    raise ValueError("The number of observations (%d) is too "
+                                     "small; the covariance matrix is "
+                                     "singular. For observations with %d "
+                                     "dimensions, at least %d observations "
+                                     "are required." % (m, n, n + 1))
+                V = np.atleast_2d(np.cov(X.T))
+                VI = _convert_to_double(np.linalg.inv(V).T.copy())
+            # (u-v)V^(-1)(u-v)^T
+            _distance_wrap.pdist_mahalanobis_wrap(X, VI, dm)
+        elif metric == 'test_euclidean':
+            dm = pdist(X, euclidean)
+        elif metric == 'test_sqeuclidean':
+            if V is None:
+                V = np.var(X, axis=0, ddof=1)
+            else:
+                V = np.asarray(V, order='c')
+            dm = pdist(X, lambda u, v: seuclidean(u, v, V))
+        elif metric == 'test_braycurtis':
+            dm = pdist(X, braycurtis)
+        elif metric == 'test_mahalanobis':
+            if VI is None:
+                V = np.cov(X.T)
+                VI = np.linalg.inv(V)
+            else:
+                VI = np.asarray(VI, order='c')
+            VI = _copy_array_if_base_present(VI)
+            # (u-v)V^(-1)(u-v)^T
+            dm = pdist(X, (lambda u, v: mahalanobis(u, v, VI)))
+        elif metric == 'test_canberra':
+            dm = pdist(X, canberra)
+        elif metric == 'test_cityblock':
+            dm = pdist(X, cityblock)
+        elif metric == 'test_minkowski':
+            dm = pdist(X, minkowski, p=p)
+        elif metric == 'test_wminkowski':
+            dm = pdist(X, wminkowski, p=p, w=w)
+        elif metric == 'test_cosine':
+            dm = pdist(X, cosine)
+        elif metric == 'test_correlation':
+            dm = pdist(X, correlation)
+        elif metric == 'test_hamming':
+            dm = pdist(X, hamming)
+        elif metric == 'test_jaccard':
+            dm = pdist(X, jaccard)
+        elif metric == 'test_chebyshev' or metric == 'test_chebychev':
+            dm = pdist(X, chebyshev)
+        elif metric == 'test_yule':
+            dm = pdist(X, yule)
+        elif metric == 'test_matching':
+            dm = pdist(X, matching)
+        elif metric == 'test_dice':
+            dm = pdist(X, dice)
+        elif metric == 'test_kulsinski':
+            dm = pdist(X, kulsinski)
+        elif metric == 'test_rogerstanimoto':
+            dm = pdist(X, rogerstanimoto)
+        elif metric == 'test_russellrao':
+            dm = pdist(X, russellrao)
+        elif metric == 'test_sokalsneath':
+            dm = pdist(X, sokalsneath)
+        elif metric == 'test_sokalmichener':
+            dm = pdist(X, sokalmichener)
         else:
             raise ValueError('Unknown Distance Metric: %s' % mstr)
     else:
@@ -1969,7 +1399,7 @@ def pdist(X, metric='euclidean', *args, **kwargs):
 
 def squareform(X, force="no", checks=True):
     """
-    Convert a vector-form distance vector to a square-form distance
+    Converts a vector-form distance vector to a square-form distance
     matrix, and vice-versa.
 
     Parameters
@@ -1977,11 +1407,11 @@ def squareform(X, force="no", checks=True):
     X : ndarray
         Either a condensed or redundant distance matrix.
     force : str, optional
-        As with MATLAB(TM), if force is equal to ``'tovector'`` or
-        ``'tomatrix'``, the input will be treated as a distance matrix or
-        distance vector respectively.
+        As with MATLAB(TM), if force is equal to 'tovector' or 'tomatrix',
+        the input will be treated as a distance matrix or distance vector
+        respectively.
     checks : bool, optional
-        If set to False, no checks will be made for matrix
+        If `checks` is set to False, no checks will be made for matrix
         symmetry nor zero diagonals. This is useful if it is known that
         ``X - X.T1`` is small and ``diag(X)`` is close to zero.
         These values are ignored any way so they do not disrupt the
@@ -1996,30 +1426,28 @@ def squareform(X, force="no", checks=True):
 
     Notes
     -----
+
     1. v = squareform(X)
 
        Given a square d-by-d symmetric distance matrix X,
-       ``v = squareform(X)`` returns a ``d * (d-1) / 2`` (or
-       :math:`{n \\choose 2}`) sized vector v.
+       ``v=squareform(X)`` returns a ``d * (d-1) / 2`` (or
+       `${n \\choose 2}$`) sized vector v.
 
-      :math:`v[{n \\choose 2}-{n-i \\choose 2} + (j-i-1)]` is the distance
+      v[{n \\choose 2}-{n-i \\choose 2} + (j-i-1)] is the distance
       between points i and j. If X is non-square or asymmetric, an error
       is returned.
 
     2. X = squareform(v)
 
-      Given a ``d*(d-1)/2`` sized v for some integer ``d >= 2`` encoding
-      distances as described, ``X = squareform(v)`` returns a d by d distance
-      matrix X.  The ``X[i, j]`` and ``X[j, i]`` values are set to
-      :math:`v[{n \\choose 2}-{n-i \\choose 2} + (j-i-1)]` and all
+      Given a d*(d-1)/2 sized v for some integer d>=2 encoding distances
+      as described, X=squareform(v) returns a d by d distance matrix X. The
+      X[i, j] and X[j, i] values are set to
+      v[{n \\choose 2}-{n-i \\choose 2} + (j-i-1)] and all
       diagonal elements are zero.
-
-    In Scipy 0.19.0, ``squareform`` stopped casting all input types to
-    float64, and started returning arrays of the same dtype as the input.
 
     """
 
-    X = np.ascontiguousarray(X)
+    X = _convert_to_double(np.asarray(X, order='c'))
 
     s = X.shape
 
@@ -2034,21 +1462,21 @@ def squareform(X, force="no", checks=True):
 
     # X = squareform(v)
     if len(s) == 1:
-        if s[0] == 0:
-            return np.zeros((1, 1), dtype=X.dtype)
+        if X.shape[0] == 0:
+            return np.zeros((1, 1), dtype=np.double)
 
         # Grab the closest value to the square root of the number
         # of elements times 2 to see if the number of elements
         # is indeed a binomial coefficient.
-        d = int(np.ceil(np.sqrt(s[0] * 2)))
+        d = int(np.ceil(np.sqrt(X.shape[0] * 2)))
 
         # Check that v is of valid dimensions.
-        if d * (d - 1) != s[0] * 2:
+        if d * (d - 1) / 2 != int(s[0]):
             raise ValueError('Incompatible vector size. It must be a binomial '
                              'coefficient n choose 2 for some integer n >= 2.')
 
         # Allocate memory for the distance matrix.
-        M = np.zeros((d, d), dtype=X.dtype)
+        M = np.zeros((d, d), dtype=np.double)
 
         # Since the C code does not support striding using strides.
         # The dimensions are used instead.
@@ -2069,10 +1497,10 @@ def squareform(X, force="no", checks=True):
         d = s[0]
 
         if d <= 1:
-            return np.array([], dtype=X.dtype)
+            return np.array([], dtype=np.double)
 
         # Create a vector.
-        v = np.zeros((d * (d - 1)) // 2, dtype=X.dtype)
+        v = np.zeros((d * (d - 1)) // 2, dtype=np.double)
 
         # Since the C code does not support striding using strides.
         # The dimensions are used instead.
@@ -2083,16 +1511,16 @@ def squareform(X, force="no", checks=True):
         return v
     else:
         raise ValueError(('The first argument must be one or two dimensional '
-                          'array. A %d-dimensional array is not '
-                          'permitted') % len(s))
+                         'array. A %d-dimensional array is not '
+                         'permitted') % len(s))
 
 
 def is_valid_dm(D, tol=0.0, throw=False, name="D", warning=False):
     """
-    Return True if input array is a valid distance matrix.
+    Returns True if input array is a valid distance matrix.
 
-    Distance matrices must be 2-dimensional numpy arrays.
-    They must have a zero-diagonal, and they must be symmetric.
+    Distance matrices must be 2-dimensional numpy arrays containing
+    doubles. They must have a zero-diagonal, and they must be symmetric.
 
     Parameters
     ----------
@@ -2128,10 +1556,17 @@ def is_valid_dm(D, tol=0.0, throw=False, name="D", warning=False):
     valid = True
     try:
         s = D.shape
+        if D.dtype != np.double:
+            if name:
+                raise TypeError(('Distance matrix \'%s\' must contain doubles '
+                                 '(double).') % name)
+            else:
+                raise TypeError('Distance matrix must contain doubles '
+                                '(double).')
         if len(D.shape) != 2:
             if name:
                 raise ValueError(('Distance matrix \'%s\' must have shape=2 '
-                                  '(i.e. be two-dimensional).') % name)
+                                 '(i.e. be two-dimensional).') % name)
             else:
                 raise ValueError('Distance matrix must have shape=2 (i.e. '
                                  'be two-dimensional).')
@@ -2145,7 +1580,7 @@ def is_valid_dm(D, tol=0.0, throw=False, name="D", warning=False):
             if not (D[xrange(0, s[0]), xrange(0, s[0])] == 0).all():
                 if name:
                     raise ValueError(('Distance matrix \'%s\' diagonal must '
-                                      'be zero.') % name)
+                                     'be zero.') % name)
                 else:
                     raise ValueError('Distance matrix diagonal must be zero.')
         else:
@@ -2177,11 +1612,11 @@ def is_valid_dm(D, tol=0.0, throw=False, name="D", warning=False):
 
 def is_valid_y(y, warning=False, throw=False, name=None):
     """
-    Return True if the input array is a valid condensed distance matrix.
+    Returns True if the input array is a valid condensed distance matrix.
 
-    Condensed distance matrices must be 1-dimensional numpy arrays.
-    Their length must be a binomial coefficient :math:`{n \\choose 2}`
-    for some positive integer n.
+    Condensed distance matrices must be 1-dimensional
+    numpy arrays containing doubles. Their length must be a binomial
+    coefficient :math:`{n \\choose 2}` for some positive integer n.
 
     Parameters
     ----------
@@ -2203,6 +1638,13 @@ def is_valid_y(y, warning=False, throw=False, name=None):
     y = np.asarray(y, order='c')
     valid = True
     try:
+        if y.dtype != np.double:
+            if name:
+                raise TypeError(('Condensed distance matrix \'%s\' must '
+                                 'contain doubles (double).') % name)
+            else:
+                raise TypeError('Condensed distance matrix must contain '
+                                'doubles (double).')
         if len(y.shape) != 1:
             if name:
                 raise ValueError(('Condensed distance matrix \'%s\' must '
@@ -2218,11 +1660,11 @@ def is_valid_y(y, warning=False, throw=False, name=None):
                 raise ValueError(('Length n of condensed distance matrix '
                                   '\'%s\' must be a binomial coefficient, i.e.'
                                   'there must be a k such that '
-                                  '(k \\choose 2)=n)!') % name)
+                                  '(k \choose 2)=n)!') % name)
             else:
                 raise ValueError('Length n of condensed distance matrix must '
                                  'be a binomial coefficient, i.e. there must '
-                                 'be a k such that (k \\choose 2)=n)!')
+                                 'be a k such that (k \choose 2)=n)!')
     except Exception as e:
         if throw:
             raise
@@ -2234,7 +1676,7 @@ def is_valid_y(y, warning=False, throw=False, name=None):
 
 def num_obs_dm(d):
     """
-    Return the number of original observations that correspond to a
+    Returns the number of original observations that correspond to a
     square, redundant distance matrix.
 
     Parameters
@@ -2255,7 +1697,7 @@ def num_obs_dm(d):
 
 def num_obs_y(Y):
     """
-    Return the number of original observations that correspond to a
+    Returns the number of original observations that correspond to a
     condensed distance matrix.
 
     Parameters
@@ -2282,74 +1724,27 @@ def num_obs_y(Y):
     return d
 
 
-def cdist(XA, XB, metric='euclidean', *args, **kwargs):
+def _row_norms(X):
+    norms = np.einsum('ij,ij->i', X, X, dtype=np.double)
+    return np.sqrt(norms, out=norms)
+
+
+def _cosine_cdist(XA, XB, dm):
+    XA = _convert_to_double(XA)
+    XB = _convert_to_double(XB)
+
+    np.dot(XA, XB.T, out=dm)
+
+    dm /= _row_norms(XA).reshape(-1, 1)
+    dm /= _row_norms(XB)
+    dm *= -1
+    dm += 1
+
+
+def cdist(XA, XB, metric='euclidean', p=2, V=None, VI=None, w=None):
     """
-    Compute distance between each pair of the two collections of inputs.
+    Computes distance between each pair of the two collections of inputs.
 
-    See Notes for common calling conventions.
-
-    Parameters
-    ----------
-    XA : ndarray
-        An :math:`m_A` by :math:`n` array of :math:`m_A`
-        original observations in an :math:`n`-dimensional space.
-        Inputs are converted to float type.
-    XB : ndarray
-        An :math:`m_B` by :math:`n` array of :math:`m_B`
-        original observations in an :math:`n`-dimensional space.
-        Inputs are converted to float type.
-    metric : str or callable, optional
-        The distance metric to use.  If a string, the distance function can be
-        'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlation',
-        'cosine', 'dice', 'euclidean', 'hamming', 'jaccard', 'kulsinski',
-        'mahalanobis', 'matching', 'minkowski', 'rogerstanimoto', 'russellrao',
-        'seuclidean', 'sokalmichener', 'sokalsneath', 'sqeuclidean',
-        'wminkowski', 'yule'.
-    *args : tuple. Deprecated.
-        Additional arguments should be passed as keyword arguments
-    **kwargs : dict, optional
-        Extra arguments to `metric`: refer to each metric documentation for a
-        list of all possible arguments.
-
-        Some possible arguments:
-
-        p : scalar
-        The p-norm to apply for Minkowski, weighted and unweighted.
-        Default: 2.
-
-        w : ndarray
-        The weight vector for metrics that support weights (e.g., Minkowski).
-
-        V : ndarray
-        The variance vector for standardized Euclidean.
-        Default: var(vstack([XA, XB]), axis=0, ddof=1)
-
-        VI : ndarray
-        The inverse of the covariance matrix for Mahalanobis.
-        Default: inv(cov(vstack([XA, XB].T))).T
-
-        out : ndarray
-        The output array
-        If not None, the distance matrix Y is stored in this array.
-        Note: metric independent, it will become a regular keyword arg in a
-        future scipy version
-
-    Returns
-    -------
-    Y : ndarray
-        A :math:`m_A` by :math:`m_B` distance matrix is returned.
-        For each :math:`i` and :math:`j`, the metric
-        ``dist(u=XA[i], v=XB[j])`` is computed and stored in the
-        :math:`ij` th entry.
-
-    Raises
-    ------
-    ValueError
-        An exception is thrown if `XA` and `XB` do not have
-        the same number of columns.
-
-    Notes
-    -----
     The following are common calling conventions:
 
     1. ``Y = cdist(XA, XB, 'euclidean')``
@@ -2359,7 +1754,7 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
        points. The points are arranged as :math:`m`
        :math:`n`-dimensional row vectors in the matrix X.
 
-    2. ``Y = cdist(XA, XB, 'minkowski', p=2.)``
+    2. ``Y = cdist(XA, XB, 'minkowski', p)``
 
        Computes the distances using the Minkowski distance
        :math:`||u-v||_p` (:math:`p`-norm) where :math:`p \\geq 1`.
@@ -2455,8 +1850,8 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
 
        .. math::
 
-            d(u,v) = \\frac{\\sum_i (|u_i-v_i|)}
-                          {\\sum_i (|u_i+v_i|)}
+            d(u,v) = \\frac{\\sum_i (u_i-v_i)}
+                          {\\sum_i (u_i+v_i)}
 
     13. ``Y = cdist(XA, XB, 'mahalanobis', VI=None)``
 
@@ -2506,7 +1901,7 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
        `sokalsneath` function documentation)
 
 
-    22. ``Y = cdist(XA, XB, 'wminkowski', p=2., w=w)``
+    22. ``Y = cdist(XA, XB, 'wminkowski')``
 
        Computes the weighted Minkowski distance between the
        vectors. (see `wminkowski` function documentation)
@@ -2532,6 +1927,46 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
        efficient, and we call it using the following syntax::
 
          dm = cdist(XA, XB, 'sokalsneath')
+
+    Parameters
+    ----------
+    XA : ndarray
+        An :math:`m_A` by :math:`n` array of :math:`m_A`
+        original observations in an :math:`n`-dimensional space.
+        Inputs are converted to float type.
+    XB : ndarray
+        An :math:`m_B` by :math:`n` array of :math:`m_B`
+        original observations in an :math:`n`-dimensional space.
+        Inputs are converted to float type.
+    metric : str or callable, optional
+        The distance metric to use.  If a string, the distance function can be
+        'braycurtis', 'canberra', 'chebyshev', 'cityblock', 'correlation',
+        'cosine', 'dice', 'euclidean', 'hamming', 'jaccard', 'kulsinski',
+        'mahalanobis', 'matching', 'minkowski', 'rogerstanimoto', 'russellrao',
+        'seuclidean', 'sokalmichener', 'sokalsneath', 'sqeuclidean',
+        'wminkowski', 'yule'.
+    w : ndarray, optional
+        The weight vector (for weighted Minkowski).
+    p : scalar, optional
+        The p-norm to apply (for Minkowski, weighted and unweighted)
+    V : ndarray, optional
+        The variance vector (for standardized Euclidean).
+    VI : ndarray, optional
+        The inverse of the covariance matrix (for Mahalanobis).
+
+    Returns
+    -------
+    Y : ndarray
+        A :math:`m_A` by :math:`m_B` distance matrix is returned.
+        For each :math:`i` and :math:`j`, the metric
+        ``dist(u=XA[i], v=XB[j])`` is computed and stored in the
+        :math:`ij` th entry.
+
+    Raises
+    ------
+    ValueError
+        An exception is thrown if `XA` and `XB` do not have
+        the same number of columns.
 
     Examples
     --------
@@ -2578,10 +2013,12 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
     # between all pairs of vectors in XA and XB using the distance metric 'abc'
     # but with a more succinct, verifiable, but less efficient implementation.
 
-    kwargs = _args_to_kwargs_xdist(args, kwargs, metric, "cdist")
-
     XA = np.asarray(XA, order='c')
     XB = np.asarray(XB, order='c')
+
+    # The C code doesn't do striding.
+    XA = _copy_array_if_base_present(_convert_to_double(XA))
+    XB = _copy_array_if_base_present(_convert_to_double(XB))
 
     s = XA.shape
     sB = XB.shape
@@ -2597,74 +2034,175 @@ def cdist(XA, XB, metric='euclidean', *args, **kwargs):
     mA = s[0]
     mB = sB[0]
     n = s[1]
-    out = kwargs.pop("out", None)
-    if out is None:
-        dm = np.empty((mA, mB), dtype=np.double)
-    else:
-        if out.shape != (mA, mB):
-            raise ValueError("Output array has incorrect shape.")
-        if not out.flags.c_contiguous:
-            raise ValueError("Output array must be C-contiguous.")
-        if out.dtype != np.double:
-            raise ValueError("Output array must be double type.")
-        dm = out
-
-    # compute blacklist for deprecated kwargs
-    if(metric in _METRICS['minkowski'].aka or
-       metric in _METRICS['wminkowski'].aka or
-       metric in ['test_minkowski', 'test_wminkowski'] or
-       metric in [minkowski, wminkowski]):
-        kwargs_blacklist = ["V", "VI"]
-    elif(metric in _METRICS['seuclidean'].aka or
-         metric == 'test_seuclidean' or metric == seuclidean):
-        kwargs_blacklist = ["p", "w", "VI"]
-    elif(metric in _METRICS['mahalanobis'].aka or
-         metric == 'test_mahalanobis' or metric == mahalanobis):
-        kwargs_blacklist = ["p", "w", "V"]
-    else:
-        kwargs_blacklist = ["p", "V", "VI"]
-
-    _filter_deprecated_kwargs(kwargs, kwargs_blacklist)
+    dm = np.zeros((mA, mB), dtype=np.double)
 
     if callable(metric):
-
-        mstr = getattr(metric, '__name__', 'Unknown')
-        metric_name = _METRIC_ALIAS.get(mstr, None)
-
-        XA, XB, typ, kwargs = _validate_cdist_input(XA, XB, mA, mB, n,
-                                                    metric_name, **kwargs)
-
-        for i in xrange(0, mA):
-            for j in xrange(0, mB):
-                dm[i, j] = metric(XA[i], XB[j], **kwargs)
-
+        if metric == minkowski:
+            for i in xrange(0, mA):
+                for j in xrange(0, mB):
+                    dm[i, j] = minkowski(XA[i, :], XB[j, :], p)
+        elif metric == wminkowski:
+            for i in xrange(0, mA):
+                for j in xrange(0, mB):
+                    dm[i, j] = wminkowski(XA[i, :], XB[j, :], p, w)
+        elif metric == seuclidean:
+            for i in xrange(0, mA):
+                for j in xrange(0, mB):
+                    dm[i, j] = seuclidean(XA[i, :], XB[j, :], V)
+        elif metric == mahalanobis:
+            for i in xrange(0, mA):
+                for j in xrange(0, mB):
+                    dm[i, j] = mahalanobis(XA[i, :], XB[j, :], V)
+        else:
+            for i in xrange(0, mA):
+                for j in xrange(0, mB):
+                    dm[i, j] = metric(XA[i, :], XB[j, :])
     elif isinstance(metric, string_types):
         mstr = metric.lower()
 
-        # NOTE: C-version still does not support weights
-        if "w" in kwargs and not mstr.startswith("test_"):
-            if(mstr in _METRICS['seuclidean'].aka or
-               mstr in _METRICS['mahalanobis'].aka):
-                raise ValueError("metric %s incompatible with weights" % mstr)
-            # need to use python version for weighting
-            kwargs['out'] = out
-            mstr = "test_%s" % mstr
-
-        metric_name = _METRIC_ALIAS.get(mstr, None)
-        if metric_name is not None:
-            XA, XB, typ, kwargs = _validate_cdist_input(XA, XB, mA, mB, n,
-                                                        metric_name, **kwargs)
-            # get cdist wrapper
-            cdist_fn = getattr(_distance_wrap,
-                               "cdist_%s_%s_wrap" % (metric_name, typ))
-            cdist_fn(XA, XB, dm, **kwargs)
+        try:
+            validate, cdist_fn = _SIMPLE_CDIST[mstr]
+            XA = validate(XA)
+            XB = validate(XB)
+            cdist_fn(XA, XB, dm)
             return dm
+        except KeyError:
+            pass
 
-        elif mstr.startswith("test_"):
-            if mstr in _TEST_METRICS:
-                dm = cdist(XA, XB, _TEST_METRICS[mstr], **kwargs)
+        if mstr in ['hamming', 'hamm', 'ha', 'h']:
+            if XA.dtype == bool:
+                XA = _convert_to_bool(XA)
+                XB = _convert_to_bool(XB)
+                _distance_wrap.cdist_hamming_bool_wrap(XA, XB, dm)
             else:
-                raise ValueError('Unknown "Test" Distance Metric: %s' % mstr[5:])
+                XA = _convert_to_double(XA)
+                XB = _convert_to_double(XB)
+                _distance_wrap.cdist_hamming_wrap(XA, XB, dm)
+        elif mstr in ['jaccard', 'jacc', 'ja', 'j']:
+            if XA.dtype == bool:
+                XA = _convert_to_bool(XA)
+                XB = _convert_to_bool(XB)
+                _distance_wrap.cdist_jaccard_bool_wrap(XA, XB, dm)
+            else:
+                XA = _convert_to_double(XA)
+                XB = _convert_to_double(XB)
+                _distance_wrap.cdist_jaccard_wrap(XA, XB, dm)
+        elif mstr in ['minkowski', 'mi', 'm', 'pnorm']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            _distance_wrap.cdist_minkowski_wrap(XA, XB, dm, p)
+        elif mstr in ['wminkowski', 'wmi', 'wm', 'wpnorm']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            w = _convert_to_double(w)
+            _distance_wrap.cdist_weighted_minkowski_wrap(XA, XB, dm, p, w)
+        elif mstr in ['seuclidean', 'se', 's']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            if V is not None:
+                V = np.asarray(V, order='c')
+                if V.dtype != np.double:
+                    raise TypeError('Variance vector V must contain doubles.')
+                if len(V.shape) != 1:
+                    raise ValueError('Variance vector V must be '
+                                     'one-dimensional.')
+                if V.shape[0] != n:
+                    raise ValueError('Variance vector V must be of the same '
+                                     'dimension as the vectors on which the '
+                                     'distances are computed.')
+                # The C code doesn't do striding.
+                VV = _copy_array_if_base_present(_convert_to_double(V))
+            else:
+                VV = np.var(np.vstack([XA, XB]), axis=0, ddof=1)
+            _distance_wrap.cdist_seuclidean_wrap(XA, XB, VV, dm)
+        elif mstr in ['cosine', 'cos']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            _cosine_cdist(XA, XB, dm)
+        elif mstr in ['correlation', 'co']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            XA -= XA.mean(axis=1)[:, np.newaxis]
+            XB -= XB.mean(axis=1)[:, np.newaxis]
+            _cosine_cdist(XA, XB, dm)
+        elif mstr in ['mahalanobis', 'mahal', 'mah']:
+            XA = _convert_to_double(XA)
+            XB = _convert_to_double(XB)
+            if VI is not None:
+                VI = _convert_to_double(np.asarray(VI, order='c'))
+                VI = _copy_array_if_base_present(VI)
+            else:
+                m = mA + mB
+                if m <= n:
+                    # There are fewer observations than the dimension of
+                    # the observations.
+                    raise ValueError("The number of observations (%d) is too "
+                                     "small; the covariance matrix is "
+                                     "singular. For observations with %d "
+                                     "dimensions, at least %d observations "
+                                     "are required." % (m, n, n + 1))
+                X = np.vstack([XA, XB])
+                V = np.atleast_2d(np.cov(X.T))
+                del X
+                VI = np.linalg.inv(V).T.copy()
+            # (u-v)V^(-1)(u-v)^T
+            _distance_wrap.cdist_mahalanobis_wrap(XA, XB, VI, dm)
+        elif metric == 'test_euclidean':
+            dm = cdist(XA, XB, euclidean)
+        elif metric == 'test_seuclidean':
+            if V is None:
+                V = np.var(np.vstack([XA, XB]), axis=0, ddof=1)
+            else:
+                V = np.asarray(V, order='c')
+            dm = cdist(XA, XB, lambda u, v: seuclidean(u, v, V))
+        elif metric == 'test_sqeuclidean':
+            dm = cdist(XA, XB, lambda u, v: sqeuclidean(u, v))
+        elif metric == 'test_braycurtis':
+            dm = cdist(XA, XB, braycurtis)
+        elif metric == 'test_mahalanobis':
+            if VI is None:
+                X = np.vstack([XA, XB])
+                V = np.cov(X.T)
+                VI = np.linalg.inv(V)
+                X = None
+                del X
+            else:
+                VI = np.asarray(VI, order='c')
+            VI = _copy_array_if_base_present(VI)
+            # (u-v)V^(-1)(u-v)^T
+            dm = cdist(XA, XB, (lambda u, v: mahalanobis(u, v, VI)))
+        elif metric == 'test_canberra':
+            dm = cdist(XA, XB, canberra)
+        elif metric == 'test_cityblock':
+            dm = cdist(XA, XB, cityblock)
+        elif metric == 'test_minkowski':
+            dm = cdist(XA, XB, minkowski, p=p)
+        elif metric == 'test_wminkowski':
+            dm = cdist(XA, XB, wminkowski, p=p, w=w)
+        elif metric == 'test_correlation':
+            dm = cdist(XA, XB, correlation)
+        elif metric == 'test_hamming':
+            dm = cdist(XA, XB, hamming)
+        elif metric == 'test_jaccard':
+            dm = cdist(XA, XB, jaccard)
+        elif metric == 'test_chebyshev' or metric == 'test_chebychev':
+            dm = cdist(XA, XB, chebyshev)
+        elif metric == 'test_yule':
+            dm = cdist(XA, XB, yule)
+        elif metric == 'test_matching':
+            dm = cdist(XA, XB, matching)
+        elif metric == 'test_dice':
+            dm = cdist(XA, XB, dice)
+        elif metric == 'test_kulsinski':
+            dm = cdist(XA, XB, kulsinski)
+        elif metric == 'test_rogerstanimoto':
+            dm = cdist(XA, XB, rogerstanimoto)
+        elif metric == 'test_russellrao':
+            dm = cdist(XA, XB, russellrao)
+        elif metric == 'test_sokalsneath':
+            dm = cdist(XA, XB, sokalsneath)
+        elif metric == 'test_sokalmichener':
+            dm = cdist(XA, XB, sokalmichener)
         else:
             raise ValueError('Unknown Distance Metric: %s' % mstr)
     else:

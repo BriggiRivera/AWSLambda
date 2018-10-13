@@ -16,10 +16,12 @@ is a relatively new package, some API changes are still possible.
    :toctree: generated/
 
    argstoarray
+   betai
    chisquare
    count_tied_groups
    describe
    f_oneway
+   f_value_wilks_lambda
    find_repeats
    friedmanchisquare
    kendalltau
@@ -43,10 +45,12 @@ is a relatively new package, some API changes are still possible.
    rankdata
    scoreatpercentile
    sem
+   signaltonoise
    skew
    skewtest
    spearmanr
    theilslopes
+   threshold
    tmax
    tmean
    tmin

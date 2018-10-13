@@ -6,10 +6,7 @@ from __future__ import division, print_function, absolute_import
 import numpy as np
 from scipy.optimize import OptimizeResult, minimize
 from scipy.optimize.optimize import _status_message
-from scipy._lib._util import check_random_state
-from scipy._lib.six import xrange, string_types
-import warnings
-
+import numbers
 
 __all__ = ['differential_evolution']
 
@@ -20,7 +17,7 @@ def differential_evolution(func, bounds, args=(), strategy='best1bin',
                            maxiter=1000, popsize=15, tol=0.01,
                            mutation=(0.5, 1), recombination=0.7, seed=None,
                            callback=None, disp=False, polish=True,
-                           init='latinhypercube', atol=0):
+                           init='latinhypercube'):
     """Finds the global minimum of a multivariate function.
     Differential Evolution is stochastic in nature (does not use gradient
     methods) to find the minimium, and can search large areas of candidate
@@ -51,11 +48,9 @@ def differential_evolution(func, bounds, args=(), strategy='best1bin',
             - 'best1exp'
             - 'rand1exp'
             - 'randtobest1exp'
-            - 'currenttobest1exp'
             - 'best2exp'
             - 'rand2exp'
             - 'randtobest1bin'
-            - 'currenttobest1bin'
             - 'best2bin'
             - 'rand2bin'
             - 'rand1bin'
@@ -67,13 +62,12 @@ def differential_evolution(func, bounds, args=(), strategy='best1bin',
         is: ``(maxiter + 1) * popsize * len(x)``
     popsize : int, optional
         A multiplier for setting the total population size.  The population has
-        ``popsize * len(x)`` individuals (unless the initial population is
-        supplied via the `init` keyword).
+        ``popsize * len(x)`` individuals.
     tol : float, optional
-        Relative tolerance for convergence, the solving stops when
-        ``np.std(pop) <= atol + tol * np.abs(np.mean(population_energies))``,
-        where and `atol` and `tol` are the absolute and relative tolerance
-        respectively.
+        When the mean of the population energies, multiplied by tol,
+        divided by the standard deviation of the population energies
+        is greater than 1 the solving process terminates:
+        ``convergence = mean(pop) * tol / stdev(pop) > 1``
     mutation : float or tuple(float, float), optional
         The mutation constant. In the literature this is also known as
         differential weight, being denoted by F.
@@ -109,29 +103,17 @@ def differential_evolution(func, bounds, args=(), strategy='best1bin',
         If True (default), then `scipy.optimize.minimize` with the `L-BFGS-B`
         method is used to polish the best population member at the end, which
         can improve the minimization slightly.
-    init : str or array-like, optional
-        Specify which type of population initialization is performed. Should be
+    init : string, optional
+        Specify how the population initialization is performed. Should be
         one of:
 
             - 'latinhypercube'
             - 'random'
-            - array specifying the initial population. The array should have
-              shape ``(M, len(x))``, where len(x) is the number of parameters.
-              `init` is clipped to `bounds` before use.
 
         The default is 'latinhypercube'. Latin Hypercube sampling tries to
-        maximize coverage of the available parameter space. 'random'
-        initializes the population randomly - this has the drawback that
-        clustering can occur, preventing the whole of parameter space being
-        covered. Use of an array to specify a population subset could be used,
-        for example, to create a tight bunch of initial guesses in an location
-        where the solution is known to exist, thereby reducing time for
-        convergence.
-    atol : float, optional
-        Absolute tolerance for convergence, the solving stops when
-        ``np.std(pop) <= atol + tol * np.abs(np.mean(population_energies))``,
-        where and `atol` and `tol` are the absolute and relative tolerance
-        respectively.
+        maximize coverage of the available parameter space. 'random' initializes
+        the population randomly - this has the drawback that clustering can
+        occur, preventing the whole of parameter space being covered.
 
     Returns
     -------
@@ -219,7 +201,8 @@ def differential_evolution(func, bounds, args=(), strategy='best1bin',
                                          recombination=recombination,
                                          seed=seed, polish=polish,
                                          callback=callback,
-                                         disp=disp, init=init, atol=atol)
+                                         disp=disp,
+                                         init=init)
     return solver.solve()
 
 
@@ -249,11 +232,9 @@ class DifferentialEvolutionSolver(object):
             - 'best1exp'
             - 'rand1exp'
             - 'randtobest1exp'
-            - 'currenttobest1exp'
             - 'best2exp'
             - 'rand2exp'
             - 'randtobest1bin'
-            - 'currenttobest1bin'
             - 'best2bin'
             - 'rand2bin'
             - 'rand1bin'
@@ -266,13 +247,12 @@ class DifferentialEvolutionSolver(object):
         is: ``(maxiter + 1) * popsize * len(x)``
     popsize : int, optional
         A multiplier for setting the total population size.  The population has
-        ``popsize * len(x)`` individuals (unless the initial population is
-        supplied via the `init` keyword).
+        ``popsize * len(x)`` individuals.
     tol : float, optional
-        Relative tolerance for convergence, the solving stops when
-        ``np.std(pop) <= atol + tol * np.abs(np.mean(population_energies))``,
-        where and `atol` and `tol` are the absolute and relative tolerance
-        respectively.
+        When the mean of the population energies, multiplied by tol,
+        divided by the standard deviation of the population energies
+        is greater than 1 the solving process terminates:
+        ``convergence = mean(pop) * tol / stdev(pop) > 1``
     mutation : float or tuple(float, float), optional
         The mutation constant. In the literature this is also known as
         differential weight, being denoted by F.
@@ -312,54 +292,31 @@ class DifferentialEvolutionSolver(object):
     maxfun : int, optional
         Set the maximum number of function evaluations. However, it probably
         makes more sense to set `maxiter` instead.
-    init : str or array-like, optional
+    init : string, optional
         Specify which type of population initialization is performed. Should be
         one of:
 
             - 'latinhypercube'
             - 'random'
-            - array specifying the initial population. The array should have
-              shape ``(M, len(x))``, where len(x) is the number of parameters.
-              `init` is clipped to `bounds` before use.
-
-        The default is 'latinhypercube'. Latin Hypercube sampling tries to
-        maximize coverage of the available parameter space. 'random'
-        initializes the population randomly - this has the drawback that
-        clustering can occur, preventing the whole of parameter space being
-        covered. Use of an array to specify a population could be used, for
-        example, to create a tight bunch of initial guesses in an location
-        where the solution is known to exist, thereby reducing time for
-        convergence.
-    atol : float, optional
-        Absolute tolerance for convergence, the solving stops when
-        ``np.std(pop) <= atol + tol * np.abs(np.mean(population_energies))``,
-        where and `atol` and `tol` are the absolute and relative tolerance
-        respectively.
     """
 
     # Dispatch of mutation strategy method (binomial or exponential).
     _binomial = {'best1bin': '_best1',
                  'randtobest1bin': '_randtobest1',
-                 'currenttobest1bin': '_currenttobest1',
                  'best2bin': '_best2',
                  'rand2bin': '_rand2',
                  'rand1bin': '_rand1'}
     _exponential = {'best1exp': '_best1',
                     'rand1exp': '_rand1',
                     'randtobest1exp': '_randtobest1',
-                    'currenttobest1exp': '_currenttobest1',
                     'best2exp': '_best2',
                     'rand2exp': '_rand2'}
-
-    __init_error_msg = ("The population initialization method must be one of "
-                        "'latinhypercube' or 'random', or an array of shape "
-                        "(M, N) where N is the number of parameters and M>5")
 
     def __init__(self, func, bounds, args=(),
                  strategy='best1bin', maxiter=1000, popsize=15,
                  tol=0.01, mutation=(0.5, 1), recombination=0.7, seed=None,
                  maxfun=np.inf, callback=None, disp=False, polish=True,
-                 init='latinhypercube', atol=0):
+                 init='latinhypercube'):
 
         if strategy in self._binomial:
             self.mutation_func = getattr(self, self._binomial[strategy])
@@ -371,9 +328,7 @@ class DifferentialEvolutionSolver(object):
 
         self.callback = callback
         self.polish = polish
-
-        # relative and absolute tolerances for convergence
-        self.tol, self.atol = tol, atol
+        self.tol = tol
 
         # Mutation constant should be in [0, 2). If specified as a sequence
         # then dithering is performed.
@@ -421,27 +376,23 @@ class DifferentialEvolutionSolver(object):
 
         self.parameter_count = np.size(self.limits, 1)
 
-        self.random_number_generator = check_random_state(seed)
+        self.random_number_generator = _make_random_gen(seed)
 
         # default population initialization is a latin hypercube design, but
         # there are other population initializations possible.
-        # the minimum is 5 because 'best2bin' requires a population that's at
-        # least 5 long
-        self.num_population_members = max(5, popsize * self.parameter_count)
+        self.num_population_members = popsize * self.parameter_count
 
         self.population_shape = (self.num_population_members,
                                  self.parameter_count)
 
         self._nfev = 0
-        if isinstance(init, string_types):
-            if init == 'latinhypercube':
-                self.init_population_lhs()
-            elif init == 'random':
-                self.init_population_random()
-            else:
-                raise ValueError(self.__init_error_msg)
+        if init == 'latinhypercube':
+            self.init_population_lhs()
+        elif init == 'random':
+            self.init_population_random()
         else:
-            self.init_population_array(init)
+            raise ValueError("The population initialization method must be one"
+                             "of 'latinhypercube' or 'random'")
 
         self.disp = disp
 
@@ -498,41 +449,6 @@ class DifferentialEvolutionSolver(object):
         # reset number of function evaluations counter
         self._nfev = 0
 
-    def init_population_array(self, init):
-        """
-        Initialises the population with a user specified population.
-
-        Parameters
-        ----------
-        init : np.ndarray
-            Array specifying subset of the initial population. The array should
-            have shape (M, len(x)), where len(x) is the number of parameters.
-            The population is clipped to the lower and upper `bounds`.
-        """
-        # make sure you're using a float array
-        popn = np.asfarray(init)
-
-        if (np.size(popn, 0) < 5 or
-                popn.shape[1] != self.parameter_count or
-                len(popn.shape) != 2):
-            raise ValueError("The population supplied needs to have shape"
-                             " (M, len(x)), where M > 4.")
-
-        # scale values and clip to bounds, assigning to population
-        self.population = np.clip(self._unscale_parameters(popn), 0, 1)
-
-        self.num_population_members = np.size(self.population, 0)
-
-        self.population_shape = (self.num_population_members,
-                                 self.parameter_count)
-
-        # reset population energies
-        self.population_energies = (np.ones(self.num_population_members) *
-                                    np.inf)
-
-        # reset number of function evaluations counter
-        self._nfev = 0
-
     @property
     def x(self):
         """
@@ -581,7 +497,7 @@ class DifferentialEvolutionSolver(object):
             self._calculate_population_energies()
 
         # do the optimisation.
-        for nit in xrange(1, self.maxiter + 1):
+        for nit in range(1, self.maxiter + 1):
             # evolve the population by a generation
             try:
                 next(self)
@@ -595,7 +511,8 @@ class DifferentialEvolutionSolver(object):
                       % (nit,
                          self.population_energies[0]))
 
-            # should the solver terminate?
+            # stop when the fractional s.d. of the population is less than tol
+            # of the mean energy
             convergence = self.convergence
 
             if (self.callback and
@@ -607,10 +524,7 @@ class DifferentialEvolutionSolver(object):
                                   'by returning True')
                 break
 
-            intol = (np.std(self.population_energies) <=
-                     self.atol +
-                     self.tol * np.abs(np.mean(self.population_energies)))
-            if warning_flag or intol:
+            if convergence < self.tol or warning_flag:
                 break
 
         else:
@@ -753,8 +667,9 @@ class DifferentialEvolutionSolver(object):
         """
         make sure the parameters lie between the limits
         """
-        for index in np.where((trial < 0) | (trial > 1))[0]:
-            trial[index] = self.random_number_generator.rand()
+        for index, param in enumerate(trial):
+            if param > 1 or param < 0:
+                trial[index] = self.random_number_generator.rand()
 
     def _mutate(self, candidate):
         """
@@ -766,7 +681,8 @@ class DifferentialEvolutionSolver(object):
 
         fill_point = rng.randint(0, self.parameter_count)
 
-        if self.strategy in ['currenttobest1exp', 'currenttobest1bin']:
+        if (self.strategy == 'randtobest1exp' or
+                self.strategy == 'randtobest1bin'):
             bprime = self.mutation_func(candidate,
                                         self._select_samples(candidate, 5))
         else:
@@ -810,25 +726,15 @@ class DifferentialEvolutionSolver(object):
         return (self.population[r0] + self.scale *
                 (self.population[r1] - self.population[r2]))
 
-    def _randtobest1(self, samples):
+    def _randtobest1(self, candidate, samples):
         """
         randtobest1bin, randtobest1exp
         """
-        r0, r1, r2 = samples[:3]
-        bprime = np.copy(self.population[r0])
-        bprime += self.scale * (self.population[0] - bprime)
-        bprime += self.scale * (self.population[r1] -
-                                self.population[r2])
-        return bprime
-
-    def _currenttobest1(self, candidate, samples):
-        """
-        currenttobest1bin, currenttobest1exp
-        """
         r0, r1 = samples[:2]
-        bprime = (self.population[candidate] + self.scale * 
-                  (self.population[0] - self.population[candidate] +
-                   self.population[r0] - self.population[r1]))
+        bprime = np.copy(self.population[candidate])
+        bprime += self.scale * (self.population[0] - bprime)
+        bprime += self.scale * (self.population[r0] -
+                                self.population[r1])
         return bprime
 
     def _best2(self, samples):
@@ -864,3 +770,20 @@ class DifferentialEvolutionSolver(object):
         idxs = idxs[:number_samples]
         return idxs
 
+
+def _make_random_gen(seed):
+    """Turn seed into a np.random.RandomState instance
+
+    If seed is None, return the RandomState singleton used by np.random.
+    If seed is an int, return a new RandomState instance seeded with seed.
+    If seed is already a RandomState instance, return it.
+    Otherwise raise ValueError.
+    """
+    if seed is None or seed is np.random:
+        return np.random.mtrand._rand
+    if isinstance(seed, (numbers.Integral, np.integer)):
+        return np.random.RandomState(seed)
+    if isinstance(seed, np.random.RandomState):
+        return seed
+    raise ValueError('%r cannot be used to seed a numpy.random.RandomState'
+                     ' instance' % seed)

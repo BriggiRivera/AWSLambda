@@ -46,8 +46,26 @@ assume:
 For the mathematical background, see [golub.welsch-1969-mathcomp]_ and
 [abramowitz.stegun-1965]_.
 
-References
-----------
+Functions::
+
+  gen_roots_and_weights  -- Generic roots and weights.
+  j_roots                -- Jacobi
+  js_roots               -- Shifted Jacobi
+  la_roots               -- Generalized Laguerre
+  h_roots                -- Hermite
+  he_roots               -- Hermite (unit-variance)
+  cg_roots               -- Ultraspherical (Gegenbauer)
+  t_roots                -- Chebyshev of the first kind
+  u_roots                -- Chebyshev of the second kind
+  c_roots                -- Chebyshev of the first kind ([-2,2] interval)
+  s_roots                -- Chebyshev of the second kind ([-2,2] interval)
+  ts_roots               -- Shifted Chebyshev of the first kind.
+  us_roots               -- Shifted Chebyshev of the second kind.
+  p_roots                -- Legendre
+  ps_roots               -- Shifted Legendre
+  l_roots                -- Laguerre
+
+
 .. [golub.welsch-1969-mathcomp]
    Golub, Gene H, and John H Welsch. 1969. Calculation of Gauss
    Quadrature Rules. *Mathematics of Computation* 23, 221-230+s1--s10.
@@ -61,14 +79,14 @@ References
 .. [townsend.trogdon.olver-2014]
    Townsend, A. and Trogdon, T. and Olver, S. (2014)
    *Fast computation of Gauss quadrature nodes and
-   weights on the whole real line*. :arXiv:`1410.5286`.
+   weights on the whole real line*. ArXiv 1410.5286.
 
 .. [townsend.trogdon.olver-2015]
    Townsend, A. and Trogdon, T. and Olver, S. (2015)
    *Fast computation of Gauss quadrature nodes and
    weights on the whole real line*.
    IMA Journal of Numerical Analysis
-   :doi:`10.1093/imanum/drv002`.
+   doi: 10.1093/imanum/drv002
 """
 #
 # Author:  Travis Oliphant 2000
@@ -78,74 +96,53 @@ from __future__ import division, print_function, absolute_import
 
 # Scipy imports.
 import numpy as np
-from numpy import (exp, inf, pi, sqrt, floor, sin, cos, around, int,
-                   hstack, arccos, arange)
+from numpy import (any, exp, inf, pi, sqrt, floor, sin, cos, around,
+                   int, hstack, arccos, arange)
 from scipy import linalg
 from scipy.special import airy
 
 # Local imports.
-from . import _ufuncs
 from . import _ufuncs as cephes
 _gam = cephes.gamma
 from . import specfun
 
-_polyfuns = ['legendre', 'chebyt', 'chebyu', 'chebyc', 'chebys',
-             'jacobi', 'laguerre', 'genlaguerre', 'hermite',
-             'hermitenorm', 'gegenbauer', 'sh_legendre', 'sh_chebyt',
-             'sh_chebyu', 'sh_jacobi']
+__all__ = ['legendre', 'chebyt', 'chebyu', 'chebyc', 'chebys',
+           'jacobi', 'laguerre', 'genlaguerre', 'hermite', 'hermitenorm',
+           'gegenbauer', 'sh_legendre', 'sh_chebyt', 'sh_chebyu', 'sh_jacobi',
+           'p_roots', 'ps_roots', 'j_roots', 'js_roots', 'l_roots', 'la_roots',
+           'he_roots', 'ts_roots', 'us_roots', 's_roots',
+           't_roots', 'u_roots', 'c_roots', 'cg_roots', 'h_roots',
+           'eval_legendre', 'eval_chebyt', 'eval_chebyu', 'eval_chebyc',
+           'eval_chebys', 'eval_jacobi', 'eval_laguerre', 'eval_genlaguerre',
+           'eval_hermite', 'eval_hermitenorm', 'eval_gegenbauer',
+           'eval_sh_legendre', 'eval_sh_chebyt', 'eval_sh_chebyu',
+           'eval_sh_jacobi', 'poch', 'binom']
 
-# Correspondence between new and old names of root functions
-_rootfuns_map = {'roots_legendre': 'p_roots',
-               'roots_chebyt': 't_roots',
-               'roots_chebyu': 'u_roots',
-               'roots_chebyc': 'c_roots',
-               'roots_chebys': 's_roots',
-               'roots_jacobi': 'j_roots',
-               'roots_laguerre': 'l_roots',
-               'roots_genlaguerre': 'la_roots',
-               'roots_hermite': 'h_roots',
-               'roots_hermitenorm': 'he_roots',
-               'roots_gegenbauer': 'cg_roots',
-               'roots_sh_legendre': 'ps_roots',
-               'roots_sh_chebyt': 'ts_roots',
-               'roots_sh_chebyu': 'us_roots',
-               'roots_sh_jacobi': 'js_roots'}
 
-_evalfuns = ['eval_legendre', 'eval_chebyt', 'eval_chebyu',
-             'eval_chebyc', 'eval_chebys', 'eval_jacobi',
-             'eval_laguerre', 'eval_genlaguerre', 'eval_hermite',
-             'eval_hermitenorm', 'eval_gegenbauer',
-             'eval_sh_legendre', 'eval_sh_chebyt', 'eval_sh_chebyu',
-             'eval_sh_jacobi']
-
-__all__ = _polyfuns + list(_rootfuns_map.keys()) + _evalfuns + ['poch', 'binom']
+# For backward compatibility
+poch = cephes.poch
 
 
 class orthopoly1d(np.poly1d):
 
     def __init__(self, roots, weights=None, hn=1.0, kn=1.0, wfunc=None,
                  limits=None, monic=False, eval_func=None):
+        np.poly1d.__init__(self, roots, r=1)
         equiv_weights = [weights[k] / wfunc(roots[k]) for
                          k in range(len(roots))]
-        mu = sqrt(hn)
-        if monic:
-            evf = eval_func
-            if evf:
-                knn = kn
-                eval_func = lambda x: evf(x) / knn
-            mu = mu / abs(kn)
-            kn = 1.0
-
-        # compute coefficients from roots, then scale
-        poly = np.poly1d(roots, r=True)
-        np.poly1d.__init__(self, poly.coeffs * float(kn))
-
-        # TODO: In numpy 1.13, there is no need to use __dict__ to access attributes
         self.__dict__['weights'] = np.array(list(zip(roots,
                                                      weights, equiv_weights)))
         self.__dict__['weight_func'] = wfunc
         self.__dict__['limits'] = limits
+        mu = sqrt(hn)
+        if monic:
+            evf = eval_func
+            if evf:
+                eval_func = lambda x: evf(x) / kn
+            mu = mu / abs(kn)
+            kn = 1.0
         self.__dict__['normcoef'] = mu
+        self.__dict__['coeffs'] *= kn
 
         # Note: eval_func will be discarded on arithmetic
         self.__dict__['_eval_func'] = eval_func
@@ -159,15 +156,8 @@ class orthopoly1d(np.poly1d):
     def _scale(self, p):
         if p == 1.0:
             return
-        try:
-            self._coeffs
-        except AttributeError:
-            self.__dict__['coeffs'] *= p
-        else:
-            # the coeffs attr is be made private in future versions of numpy
-            self._coeffs *= p
-
-        evf = self._eval_func
+        self.__dict__['coeffs'] *= p
+        evf = self.__dict__['_eval_func']
         if evf:
             self.__dict__['_eval_func'] = lambda x: evf(x) * p
         self.__dict__['normcoef'] *= p
@@ -218,7 +208,7 @@ def _gen_roots_and_weights(n, mu0, an_func, bn_func, f, df, symmetrize, mu):
 # Jacobi Polynomials 1               P^(alpha,beta)_n(x)
 
 
-def roots_jacobi(n, alpha, beta, mu=False):
+def j_roots(n, alpha, beta, mu=False):
     r"""Gauss-Jacobi quadrature.
 
     Computes the sample points and weights for Gauss-Jacobi quadrature. The
@@ -235,7 +225,7 @@ def roots_jacobi(n, alpha, beta, mu=False):
     alpha : float
         alpha must be > -1
     beta : float
-        beta must be > -1
+        beta must be > 0
     mu : bool, optional
         If True, return the sum of the weights, optional.
 
@@ -260,9 +250,9 @@ def roots_jacobi(n, alpha, beta, mu=False):
         raise ValueError("alpha and beta must be greater than -1.")
 
     if alpha == 0.0 and beta == 0.0:
-        return roots_legendre(m, mu)
+        return p_roots(m, mu)
     if alpha == beta:
-        return roots_gegenbauer(m, alpha+0.5, mu)
+        return cg_roots(m, alpha+0.5, mu)
 
     mu0 = 2.0**(alpha+beta+1)*cephes.beta(alpha+1, beta+1)
     a = alpha
@@ -283,42 +273,9 @@ def roots_jacobi(n, alpha, beta, mu=False):
 
 
 def jacobi(n, alpha, beta, monic=False):
-    r"""Jacobi polynomial.
-
-    Defined to be the solution of
-
-    .. math::
-        (1 - x^2)\frac{d^2}{dx^2}P_n^{(\alpha, \beta)}
-          + (\beta - \alpha - (\alpha + \beta + 2)x)
-            \frac{d}{dx}P_n^{(\alpha, \beta)}
-          + n(n + \alpha + \beta + 1)P_n^{(\alpha, \beta)} = 0
-
-    for :math:`\alpha, \beta > -1`; :math:`P_n^{(\alpha, \beta)}` is a
-    polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    alpha : float
-        Parameter, must be greater than -1.
-    beta : float
-        Parameter, must be greater than -1.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    P : orthopoly1d
-        Jacobi polynomial.
-
-    Notes
-    -----
-    For fixed :math:`\alpha, \beta`, the polynomials
-    :math:`P_n^{(\alpha, \beta)}` are orthogonal over :math:`[-1, 1]`
-    with weight function :math:`(1 - x)^\alpha(1 + x)^\beta`.
-
+    """Returns the nth order Jacobi polynomial, P^(alpha,beta)_n(x)
+    orthogonal over [-1,1] with weighting function
+    (1-x)**alpha (1+x)**beta with alpha,beta > -1.
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -327,7 +284,7 @@ def jacobi(n, alpha, beta, monic=False):
     if n == 0:
         return orthopoly1d([], [], 1.0, 1.0, wfunc, (-1, 1), monic,
                            eval_func=np.ones_like)
-    x, w, mu = roots_jacobi(n, alpha, beta, mu=True)
+    x, w, mu = j_roots(n, alpha, beta, mu=True)
     ab1 = alpha + beta + 1.0
     hn = 2**ab1 / (2 * n + ab1) * _gam(n + alpha + 1)
     hn *= _gam(n + beta + 1.0) / _gam(n + 1) / _gam(n + ab1)
@@ -340,7 +297,7 @@ def jacobi(n, alpha, beta, monic=False):
 # Jacobi Polynomials shifted         G_n(p,q,x)
 
 
-def roots_sh_jacobi(n, p1, q1, mu=False):
+def js_roots(n, p1, q1, mu=False):
     """Gauss-Jacobi (shifted) quadrature.
 
     Computes the sample points and weights for Gauss-Jacobi (shifted)
@@ -377,7 +334,7 @@ def roots_sh_jacobi(n, p1, q1, mu=False):
     """
     if (p1-q1) <= -1 or q1 <= 0:
         raise ValueError("(p - q) must be greater than -1, and q must be greater than 0.")
-    x, w, m = roots_jacobi(n, p1-q1, q1-1, True)
+    x, w, m = j_roots(n, p1-q1, q1-1, True)
     x = (x + 1) / 2
     scale = 2.0**p1
     w /= scale
@@ -388,40 +345,9 @@ def roots_sh_jacobi(n, p1, q1, mu=False):
         return x, w
 
 def sh_jacobi(n, p, q, monic=False):
-    r"""Shifted Jacobi polynomial.
-
-    Defined by
-
-    .. math::
-
-        G_n^{(p, q)}(x)
-          = \binom{2n + p - 1}{n}^{-1}P_n^{(p - q, q - 1)}(2x - 1),
-
-    where :math:`P_n^{(\cdot, \cdot)}` is the nth Jacobi polynomial.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    p : float
-        Parameter, must have :math:`p > q - 1`.
-    q : float
-        Parameter, must be greater than 0.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    G : orthopoly1d
-        Shifted Jacobi polynomial.
-
-    Notes
-    -----
-    For fixed :math:`p, q`, the polynomials :math:`G_n^{(p, q)}` are
-    orthogonal over :math:`[0, 1]` with weight function :math:`(1 -
-    x)^{p - q}x^{q - 1}`.
-
+    """Returns the nth order Jacobi polynomial, G_n(p,q,x)
+    orthogonal over [0,1] with weighting function
+    (1-x)**(p-q) (x)**(q-1) with p>q-1 and q > 0.
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -431,7 +357,7 @@ def sh_jacobi(n, p, q, monic=False):
         return orthopoly1d([], [], 1.0, 1.0, wfunc, (-1, 1), monic,
                            eval_func=np.ones_like)
     n1 = n
-    x, w, mu0 = roots_sh_jacobi(n1, p, q, mu=True)
+    x, w, mu0 = js_roots(n1, p, q, mu=True)
     hn = _gam(n + 1) * _gam(n + q) * _gam(n + p) * _gam(n + p - q + 1)
     hn /= (2 * n + p) * (_gam(2 * n + p)**2)
     # kn = 1.0 in standard form so monic is redundant.  Kept for compatibility.
@@ -443,7 +369,7 @@ def sh_jacobi(n, p, q, monic=False):
 # Generalized Laguerre               L^(alpha)_n(x)
 
 
-def roots_genlaguerre(n, alpha, mu=False):
+def la_roots(n, alpha, mu=False):
     r"""Gauss-generalized Laguerre quadrature.
 
     Computes the sample points and weights for Gauss-generalized Laguerre
@@ -501,48 +427,11 @@ def roots_genlaguerre(n, alpha, mu=False):
 
 
 def genlaguerre(n, alpha, monic=False):
-    r"""Generalized (associated) Laguerre polynomial.
-
-    Defined to be the solution of
-
-    .. math::
-        x\frac{d^2}{dx^2}L_n^{(\alpha)}
-          + (\alpha + 1 - x)\frac{d}{dx}L_n^{(\alpha)}
-          + nL_n^{(\alpha)} = 0,
-
-    where :math:`\alpha > -1`; :math:`L_n^{(\alpha)}` is a polynomial
-    of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    alpha : float
-        Parameter, must be greater than -1.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    L : orthopoly1d
-        Generalized Laguerre polynomial.
-
-    Notes
-    -----
-    For fixed :math:`\alpha`, the polynomials :math:`L_n^{(\alpha)}`
-    are orthogonal over :math:`[0, \infty)` with weight function
-    :math:`e^{-x}x^\alpha`.
-
-    The Laguerre polynomials are the special case where :math:`\alpha
-    = 0`.
-
-    See Also
-    --------
-    laguerre : Laguerre polynomial.
-
+    """Returns the nth order generalized (associated) Laguerre polynomial,
+    L^(alpha)_n(x), orthogonal over [0,inf) with weighting function
+    exp(-x) x**alpha with alpha > -1
     """
-    if alpha <= -1:
+    if any(alpha <= -1):
         raise ValueError("alpha must be > -1")
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -551,7 +440,7 @@ def genlaguerre(n, alpha, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_genlaguerre(n1, alpha, mu=True)
+    x, w, mu0 = la_roots(n1, alpha, mu=True)
     wfunc = lambda x: exp(-x) * x**alpha
     if n == 0:
         x, w = [], []
@@ -564,7 +453,7 @@ def genlaguerre(n, alpha, monic=False):
 # Laguerre                      L_n(x)
 
 
-def roots_laguerre(n, mu=False):
+def l_roots(n, mu=False):
     r"""Gauss-Laguerre quadrature.
 
     Computes the sample points and weights for Gauss-Laguerre quadrature.
@@ -595,37 +484,12 @@ def roots_laguerre(n, mu=False):
     scipy.integrate.fixed_quad
     numpy.polynomial.laguerre.laggauss
     """
-    return roots_genlaguerre(n, 0.0, mu=mu)
+    return la_roots(n, 0.0, mu=mu)
 
 
 def laguerre(n, monic=False):
-    r"""Laguerre polynomial.
-
-    Defined to be the solution of
-
-    .. math::
-        x\frac{d^2}{dx^2}L_n + (1 - x)\frac{d}{dx}L_n + nL_n = 0;
-
-    :math:`L_n` is a polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    L : orthopoly1d
-        Laguerre Polynomial.
-
-    Notes
-    -----
-    The polynomials :math:`L_n` are orthogonal over :math:`[0,
-    \infty)` with weight function :math:`e^{-x}`.
-
+    """Return the nth order Laguerre polynoimal, L_n(x), orthogonal over
+    [0,inf) with weighting function exp(-x)
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -634,7 +498,7 @@ def laguerre(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_laguerre(n1, mu=True)
+    x, w, mu0 = l_roots(n1, mu=True)
     if n == 0:
         x, w = [], []
     hn = 1.0
@@ -646,7 +510,7 @@ def laguerre(n, monic=False):
 # Hermite  1                         H_n(x)
 
 
-def roots_hermite(n, mu=False):
+def h_roots(n, mu=False):
     r"""Gauss-Hermite (physicst's) quadrature.
 
     Computes the sample points and weights for Gauss-Hermite quadrature.
@@ -688,21 +552,21 @@ def roots_hermite(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     numpy.polynomial.hermite.hermgauss
-    roots_hermitenorm
+    he_roots
 
     References
     ----------
     .. [townsend.trogdon.olver-2014]
        Townsend, A. and Trogdon, T. and Olver, S. (2014)
        *Fast computation of Gauss quadrature nodes and
-       weights on the whole real line*. :arXiv:`1410.5286`.
+       weights on the whole real line*. ArXiv 1410.5286.
 
     .. [townsend.trogdon.olver-2015]
        Townsend, A. and Trogdon, T. and Olver, S. (2015)
        *Fast computation of Gauss quadrature nodes and
        weights on the whole real line*.
        IMA Journal of Numerical Analysis
-       :doi:`10.1093/imanum/drv002`.
+       doi: 10.1093/imanum/drv002
     """
     m = int(n)
     if n < 1 or n != m:
@@ -716,7 +580,7 @@ def roots_hermite(n, mu=False):
         df = lambda n, x: 2.0 * n * cephes.eval_hermite(n-1, x)
         return _gen_roots_and_weights(m, mu0, an_func, bn_func, f, df, True, mu)
     else:
-        nodes, weights = _roots_hermite_asy(m)
+        nodes, weights = _h_roots_asy(m)
         if mu:
             return nodes, weights, mu0
         else:
@@ -747,7 +611,7 @@ def _compute_tauk(n, k, maxit=5):
     See Also
     --------
     initial_nodes_a
-    roots_hermite_asy
+    h_roots_asy
     """
     a = n % 2 - 0.5
     c = (4.0*floor(n/2.0) - 4.0*k + 3.0)*pi / (4.0*floor(n/2.0) + 2.0*a + 2.0)
@@ -760,7 +624,7 @@ def _compute_tauk(n, k, maxit=5):
 
 
 def _initial_nodes_a(n, k):
-    r"""Tricomi initial guesses
+    """Tricomi initial guesses
 
     Computes an initial approximation to the square of the `k`-th
     (positive) root :math:`x_k` of the Hermite polynomial :math:`H_n`
@@ -783,7 +647,7 @@ def _initial_nodes_a(n, k):
     See Also
     --------
     initial_nodes
-    roots_hermite_asy
+    h_roots_asy
     """
     tauk = _compute_tauk(n, k)
     sigk = cos(0.5*tauk)**2
@@ -795,7 +659,7 @@ def _initial_nodes_a(n, k):
 
 
 def _initial_nodes_b(n, k):
-    r"""Gatteschi initial guesses
+    """Gatteschi initial guesses
 
     Computes an initial approximation to the square of the `k`-th
     (positive) root :math:`x_k` of the Hermite polynomial :math:`H_n`
@@ -818,7 +682,7 @@ def _initial_nodes_b(n, k):
     See Also
     --------
     initial_nodes
-    roots_hermite_asy
+    h_roots_asy
     """
     a = n % 2 - 0.5
     nu = 4.0*floor(n/2.0) + 2.0*a + 2.0
@@ -854,7 +718,7 @@ def _initial_nodes(n):
 
     See Also
     --------
-    roots_hermite_asy
+    h_roots_asy
     """
     # Turnover point
     # linear polynomial fit to error of 10, 25, 40, ..., 1000 point rules
@@ -874,7 +738,7 @@ def _initial_nodes(n):
 
 
 def _pbcf(n, theta):
-    r"""Asymptotic series expansion of parabolic cylinder function
+    """Asymptotic series expansion of parabolic cylinder function
 
     The implementation is based on sections 3.2 and 3.3 from the
     original paper. Compared to the published version this code
@@ -900,7 +764,7 @@ def _pbcf(n, theta):
 
     See Also
     --------
-    roots_hermite_asy
+    h_roots_asy
 
     References
     ----------
@@ -1007,7 +871,7 @@ def _newton(n, x_initial, maxit=5):
 
     See Also
     --------
-    roots_hermite_asy
+    h_roots_asy
     """
     # Variable transformation
     mu = sqrt(2.0*n + 1.0)
@@ -1030,7 +894,7 @@ def _newton(n, x_initial, maxit=5):
     return x, w
 
 
-def _roots_hermite_asy(n):
+def _h_roots_asy(n):
     r"""Gauss-Hermite (physicst's) quadrature for large n.
 
     Computes the sample points and weights for Gauss-Hermite quadrature.
@@ -1057,21 +921,21 @@ def _roots_hermite_asy(n):
 
     See Also
     --------
-    roots_hermite
+    h_roots
 
     References
     ----------
     .. [townsend.trogdon.olver-2014]
        Townsend, A. and Trogdon, T. and Olver, S. (2014)
        *Fast computation of Gauss quadrature nodes and
-       weights on the whole real line*. :arXiv:`1410.5286`.
+       weights on the whole real line*. ArXiv 1410.5286.
 
     .. [townsend.trogdon.olver-2015]
        Townsend, A. and Trogdon, T. and Olver, S. (2015)
        *Fast computation of Gauss quadrature nodes and
        weights on the whole real line*.
        IMA Journal of Numerical Analysis
-       :doi:`10.1093/imanum/drv002`.
+       doi: 10.1093/imanum/drv002
     """
     iv = _initial_nodes(n)
     nodes, weights = _newton(n, iv)
@@ -1088,34 +952,8 @@ def _roots_hermite_asy(n):
 
 
 def hermite(n, monic=False):
-    r"""Physicist's Hermite polynomial.
-
-    Defined by
-
-    .. math::
-
-        H_n(x) = (-1)^ne^{x^2}\frac{d^n}{dx^n}e^{-x^2};
-
-    :math:`H_n` is a polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    H : orthopoly1d
-        Hermite polynomial.
-
-    Notes
-    -----
-    The polynomials :math:`H_n` are orthogonal over :math:`(-\infty,
-    \infty)` with weight function :math:`e^{-x^2}`.
-
+    """Return the nth order Hermite polynomial, H_n(x), orthogonal over
+    (-inf,inf) with weighting function exp(-x**2)
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -1124,7 +962,7 @@ def hermite(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_hermite(n1, mu=True)
+    x, w, mu0 = h_roots(n1, mu=True)
     wfunc = lambda x: exp(-x * x)
     if n == 0:
         x, w = [], []
@@ -1137,14 +975,14 @@ def hermite(n, monic=False):
 # Hermite  2                         He_n(x)
 
 
-def roots_hermitenorm(n, mu=False):
+def he_roots(n, mu=False):
     r"""Gauss-Hermite (statistician's) quadrature.
 
     Computes the sample points and weights for Gauss-Hermite quadrature.
     The sample points are the roots of the n-th degree Hermite polynomial,
     :math:`He_n(x)`.  These sample points and weights correctly integrate
     polynomials of degree :math:`2n - 1` or less over the interval
-    :math:`[-\infty, \infty]` with weight function :math:`f(x) = e^{-x^2/2}`.
+    :math:`[-\infty, \infty]` with weight function :math:`f(x) = e^{-(x/2)^2}`.
 
     Parameters
     ----------
@@ -1192,7 +1030,7 @@ def roots_hermitenorm(n, mu=False):
         df = lambda n, x: n * cephes.eval_hermitenorm(n-1, x)
         return _gen_roots_and_weights(m, mu0, an_func, bn_func, f, df, True, mu)
     else:
-        nodes, weights = _roots_hermite_asy(m)
+        nodes, weights = _h_roots_asy(m)
         # Transform
         nodes *= sqrt(2)
         weights *= sqrt(2)
@@ -1203,35 +1041,8 @@ def roots_hermitenorm(n, mu=False):
 
 
 def hermitenorm(n, monic=False):
-    r"""Normalized (probabilist's) Hermite polynomial.
-
-    Defined by
-
-    .. math::
-
-        He_n(x) = (-1)^ne^{x^2/2}\frac{d^n}{dx^n}e^{-x^2/2};
-
-    :math:`He_n` is a polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    He : orthopoly1d
-        Hermite polynomial.
-
-    Notes
-    -----
-
-    The polynomials :math:`He_n` are orthogonal over :math:`(-\infty,
-    \infty)` with weight function :math:`e^{-x^2/2}`.
-
+    """Return the nth order normalized Hermite polynomial, He_n(x), orthogonal
+    over (-inf,inf) with weighting function exp(-(x/2)**2)
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -1240,7 +1051,7 @@ def hermitenorm(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_hermitenorm(n1, mu=True)
+    x, w, mu0 = he_roots(n1, mu=True)
     wfunc = lambda x: exp(-x * x / 2.0)
     if n == 0:
         x, w = [], []
@@ -1255,7 +1066,7 @@ def hermitenorm(n, monic=False):
 # Ultraspherical (Gegenbauer)        C^(alpha)_n(x)
 
 
-def roots_gegenbauer(n, alpha, mu=False):
+def cg_roots(n, alpha, mu=False):
     r"""Gauss-Gegenbauer quadrature.
 
     Computes the sample points and weights for Gauss-Gegenbauer quadrature.
@@ -1298,7 +1109,7 @@ def roots_gegenbauer(n, alpha, mu=False):
         # strictly, we should just error out here, since the roots are not
         # really defined, but we used to return something useful, so let's
         # keep doing so.
-        return roots_chebyt(n, mu)
+        return t_roots(n, mu)
 
     mu0 = np.sqrt(np.pi) * cephes.gamma(alpha + 0.5) / cephes.gamma(alpha + 1)
     an_func = lambda k: 0.0 * k
@@ -1311,37 +1122,9 @@ def roots_gegenbauer(n, alpha, mu=False):
 
 
 def gegenbauer(n, alpha, monic=False):
-    r"""Gegenbauer (ultraspherical) polynomial.
-
-    Defined to be the solution of
-
-    .. math::
-        (1 - x^2)\frac{d^2}{dx^2}C_n^{(\alpha)}
-          - (2\alpha + 1)x\frac{d}{dx}C_n^{(\alpha)}
-          + n(n + 2\alpha)C_n^{(\alpha)} = 0
-
-    for :math:`\alpha > -1/2`; :math:`C_n^{(\alpha)}` is a polynomial
-    of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    C : orthopoly1d
-        Gegenbauer polynomial.
-
-    Notes
-    -----
-    The polynomials :math:`C_n^{(\alpha)}` are orthogonal over
-    :math:`[-1,1]` with weight function :math:`(1 - x^2)^{(\alpha -
-    1/2)}`.
-
+    """Return the nth order Gegenbauer (ultraspherical) polynomial,
+    C^(alpha)_n(x), orthogonal over [-1,1] with weighting function
+    (1-x**2)**(alpha-1/2) with alpha > -1/2
     """
     base = jacobi(n, alpha - 0.5, alpha - 0.5, monic=monic)
     if monic:
@@ -1358,7 +1141,7 @@ def gegenbauer(n, alpha, monic=False):
 # Computed anew.
 
 
-def roots_chebyt(n, mu=False):
+def t_roots(n, mu=False):
     r"""Gauss-Chebyshev (first kind) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1392,8 +1175,9 @@ def roots_chebyt(n, mu=False):
     m = int(n)
     if n < 1 or n != m:
         raise ValueError('n must be a positive integer.')
-    x = _ufuncs._sinpi(np.arange(-m + 1, m, 2) / (2*m))
-    w = np.full_like(x, pi/m)
+    x = np.cos(np.arange(2 * m - 1, 0, -2) * pi / (2 * m))
+    w = np.empty_like(x)
+    w.fill(pi/m)
     if mu:
         return x, w, pi
     else:
@@ -1401,37 +1185,8 @@ def roots_chebyt(n, mu=False):
 
 
 def chebyt(n, monic=False):
-    r"""Chebyshev polynomial of the first kind.
-
-    Defined to be the solution of
-
-    .. math::
-        (1 - x^2)\frac{d^2}{dx^2}T_n - x\frac{d}{dx}T_n + n^2T_n = 0;
-
-    :math:`T_n` is a polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    T : orthopoly1d
-        Chebyshev polynomial of the first kind.
-
-    Notes
-    -----
-    The polynomials :math:`T_n` are orthogonal over :math:`[-1, 1]`
-    with weight function :math:`(1 - x^2)^{-1/2}`.
-
-    See Also
-    --------
-    chebyu : Chebyshev polynomial of the second kind.
-
+    """Return nth order Chebyshev polynomial of first kind, Tn(x).  Orthogonal
+    over [-1,1] with weight function (1-x**2)**(-1/2).
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -1441,7 +1196,7 @@ def chebyt(n, monic=False):
         return orthopoly1d([], [], pi, 1.0, wfunc, (-1, 1), monic,
                            lambda x: eval_chebyt(n, x))
     n1 = n
-    x, w, mu = roots_chebyt(n1, mu=True)
+    x, w, mu = t_roots(n1, mu=True)
     hn = pi / 2
     kn = 2**(n - 1)
     p = orthopoly1d(x, w, hn, kn, wfunc, (-1, 1), monic,
@@ -1452,7 +1207,7 @@ def chebyt(n, monic=False):
 #    U_n(x) = (n+1)! sqrt(pi) / (2*_gam(n+3./2)) * P^(1/2,1/2)_n(x)
 
 
-def roots_chebyu(n, mu=False):
+def u_roots(n, mu=False):
     r"""Gauss-Chebyshev (second kind) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1495,38 +1250,8 @@ def roots_chebyu(n, mu=False):
 
 
 def chebyu(n, monic=False):
-    r"""Chebyshev polynomial of the second kind.
-
-    Defined to be the solution of
-
-    .. math::
-        (1 - x^2)\frac{d^2}{dx^2}U_n - 3x\frac{d}{dx}U_n
-          + n(n + 2)U_n = 0;
-
-    :math:`U_n` is a polynomial of degree :math:`n`.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    U : orthopoly1d
-        Chebyshev polynomial of the second kind.
-
-    Notes
-    -----
-    The polynomials :math:`U_n` are orthogonal over :math:`[-1, 1]`
-    with weight function :math:`(1 - x^2)^{1/2}`.
-
-    See Also
-    --------
-    chebyt : Chebyshev polynomial of the first kind.
-
+    """Return nth order Chebyshev polynomial of second kind, Un(x).  Orthogonal
+    over [-1,1] with weight function (1-x**2)**(1/2).
     """
     base = jacobi(n, 0.5, 0.5, monic=monic)
     if monic:
@@ -1538,7 +1263,7 @@ def chebyu(n, monic=False):
 # Chebyshev of the first kind        C_n(x)
 
 
-def roots_chebyc(n, mu=False):
+def c_roots(n, mu=False):
     r"""Gauss-Chebyshev (first kind) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1568,7 +1293,7 @@ def roots_chebyc(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     """
-    x, w, m = roots_chebyt(n, True)
+    x, w, m = t_roots(n, True)
     x *= 2
     w *= 2
     m *= 2
@@ -1579,38 +1304,9 @@ def roots_chebyc(n, mu=False):
 
 
 def chebyc(n, monic=False):
-    r"""Chebyshev polynomial of the first kind on :math:`[-2, 2]`.
-
-    Defined as :math:`C_n(x) = 2T_n(x/2)`, where :math:`T_n` is the
-    nth Chebychev polynomial of the first kind.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    C : orthopoly1d
-        Chebyshev polynomial of the first kind on :math:`[-2, 2]`.
-
-    Notes
-    -----
-    The polynomials :math:`C_n(x)` are orthogonal over :math:`[-2, 2]`
-    with weight function :math:`1/\sqrt{1 - (x/2)^2}`.
-
-    See Also
-    --------
-    chebyt : Chebyshev polynomial of the first kind.
-
-    References
-    ----------
-    .. [1] Abramowitz and Stegun, "Handbook of Mathematical Functions"
-           Section 22. National Bureau of Standards, 1972.
-
+    """Return n-th order Chebyshev polynomial of first kind, :math:`C_n(x)`. 
+    Orthogonal over :math:`[-2, 2]` with weight function
+    :math:`f(x) = 1/\sqrt{1 - (x/2)^2}`
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -1619,7 +1315,7 @@ def chebyc(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_chebyc(n1, mu=True)
+    x, w, mu0 = c_roots(n1, mu=True)
     if n == 0:
         x, w = [], []
     hn = 4 * pi * ((n == 0) + 1)
@@ -1635,7 +1331,7 @@ def chebyc(n, monic=False):
 # Chebyshev of the second kind       S_n(x)
 
 
-def roots_chebys(n, mu=False):
+def s_roots(n, mu=False):
     r"""Gauss-Chebyshev (second kind) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1665,7 +1361,7 @@ def roots_chebys(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     """
-    x, w, m = roots_chebyu(n, True)
+    x, w, m = u_roots(n, True)
     x *= 2
     w *= 2
     m *= 2
@@ -1676,38 +1372,9 @@ def roots_chebys(n, mu=False):
 
 
 def chebys(n, monic=False):
-    r"""Chebyshev polynomial of the second kind on :math:`[-2, 2]`.
-
-    Defined as :math:`S_n(x) = U_n(x/2)` where :math:`U_n` is the
-    nth Chebychev polynomial of the second kind.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    S : orthopoly1d
-        Chebyshev polynomial of the second kind on :math:`[-2, 2]`.
-
-    Notes
-    -----
-    The polynomials :math:`S_n(x)` are orthogonal over :math:`[-2, 2]`
-    with weight function :math:`\sqrt{1 - (x/2)}^2`.
-
-    See Also
-    --------
-    chebyu : Chebyshev polynomial of the second kind
-
-    References
-    ----------
-    .. [1] Abramowitz and Stegun, "Handbook of Mathematical Functions"
-           Section 22. National Bureau of Standards, 1972.
-
+    r"""Return nth order Chebyshev polynomial of second kind, :math:`S_n(x)`.
+    Orthogonal over :math:`[-2, 2]` with weight function
+    :math:`f(x) = \sqrt{1 - (x/2)^2}`.
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -1716,7 +1383,7 @@ def chebys(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_chebys(n1, mu=True)
+    x, w, mu0 = s_roots(n1, mu=True)
     if n == 0:
         x, w = [], []
     hn = pi
@@ -1733,7 +1400,7 @@ def chebys(n, monic=False):
 # Shifted Chebyshev of the first kind     T^*_n(x)
 
 
-def roots_sh_chebyt(n, mu=False):
+def ts_roots(n, mu=False):
     r"""Gauss-Chebyshev (first kind, shifted) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1764,34 +1431,13 @@ def roots_sh_chebyt(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     """
-    xw = roots_chebyt(n, mu)
+    xw = t_roots(n, mu)
     return ((xw[0] + 1) / 2,) + xw[1:]
 
 
 def sh_chebyt(n, monic=False):
-    r"""Shifted Chebyshev polynomial of the first kind.
-
-    Defined as :math:`T^*_n(x) = T_n(2x - 1)` for :math:`T_n` the nth
-    Chebyshev polynomial of the first kind.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    T : orthopoly1d
-        Shifted Chebyshev polynomial of the first kind.
-
-    Notes
-    -----
-    The polynomials :math:`T^*_n` are orthogonal over :math:`[0, 1]`
-    with weight function :math:`(x - x^2)^{-1/2}`.
-
+    """Return nth order shifted Chebyshev polynomial of first kind, Tn(x).
+    Orthogonal over [0,1] with weight function (x-x**2)**(-1/2).
     """
     base = sh_jacobi(n, 0.0, 0.5, monic=monic)
     if monic:
@@ -1805,7 +1451,7 @@ def sh_chebyt(n, monic=False):
 
 
 # Shifted Chebyshev of the second kind    U^*_n(x)
-def roots_sh_chebyu(n, mu=False):
+def us_roots(n, mu=False):
     r"""Gauss-Chebyshev (second kind, shifted) quadrature.
 
     Computes the sample points and weights for Gauss-Chebyshev quadrature.
@@ -1836,7 +1482,7 @@ def roots_sh_chebyu(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     """
-    x, w, m = roots_chebyu(n, True)
+    x, w, m = u_roots(n, True)
     x = (x + 1) / 2
     m_us = cephes.beta(1.5, 1.5)
     w *= m_us / m
@@ -1847,29 +1493,8 @@ def roots_sh_chebyu(n, mu=False):
 
 
 def sh_chebyu(n, monic=False):
-    r"""Shifted Chebyshev polynomial of the second kind.
-
-    Defined as :math:`U^*_n(x) = U_n(2x - 1)` for :math:`U_n` the nth
-    Chebyshev polynomial of the second kind.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    U : orthopoly1d
-        Shifted Chebyshev polynomial of the second kind.
-
-    Notes
-    -----
-    The polynomials :math:`U^*_n` are orthogonal over :math:`[0, 1]`
-    with weight function :math:`(x - x^2)^{1/2}`.
-
+    """Return nth order shifted Chebyshev polynomial of second kind, Un(x).
+    Orthogonal over [0,1] with weight function (x-x**2)**(1/2).
     """
     base = sh_jacobi(n, 2.0, 1.5, monic=monic)
     if monic:
@@ -1881,7 +1506,7 @@ def sh_chebyu(n, monic=False):
 # Legendre
 
 
-def roots_legendre(n, mu=False):
+def p_roots(n, mu=False):
     r"""Gauss-Legendre quadrature.
 
     Computes the sample points and weights for Gauss-Legendre quadrature.
@@ -1926,33 +1551,24 @@ def roots_legendre(n, mu=False):
 
 
 def legendre(n, monic=False):
-    r"""Legendre polynomial.
+    """
+    Legendre polynomial coefficients
 
-    Defined to be the solution of
-
-    .. math::
-        \frac{d}{dx}\left[(1 - x^2)\frac{d}{dx}P_n(x)\right]
-          + n(n + 1)P_n(x) = 0;
-
-    :math:`P_n(x)` is a polynomial of degree :math:`n`.
+    Returns the nth-order Legendre polynomial, P_n(x), orthogonal over
+    [-1, 1] with weight function 1.
 
     Parameters
     ----------
-    n : int
-        Degree of the polynomial.
+    n
+        Order of the polynomial
     monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
+        If True, output is a monic polynomial (normalized so the leading
+        coefficient is 1).  Default is False.
 
     Returns
     -------
     P : orthopoly1d
-        Legendre polynomial.
-
-    Notes
-    -----
-    The polynomials :math:`P_n` are orthogonal over :math:`[-1, 1]`
-    with weight function 1.
+        The Legendre polynomial object
 
     Examples
     --------
@@ -1970,7 +1586,7 @@ def legendre(n, monic=False):
         n1 = n + 1
     else:
         n1 = n
-    x, w, mu0 = roots_legendre(n1, mu=True)
+    x, w, mu0 = p_roots(n1, mu=True)
     if n == 0:
         x, w = [], []
     hn = 2.0 / (2 * n + 1)
@@ -1982,7 +1598,7 @@ def legendre(n, monic=False):
 # Shifted Legendre              P^*_n(x)
 
 
-def roots_sh_legendre(n, mu=False):
+def ps_roots(n, mu=False):
     r"""Gauss-Legendre (shifted) quadrature.
 
     Computes the sample points and weights for Gauss-Legendre quadrature.
@@ -2012,7 +1628,7 @@ def roots_sh_legendre(n, mu=False):
     scipy.integrate.quadrature
     scipy.integrate.fixed_quad
     """
-    x, w = roots_legendre(n)
+    x, w = p_roots(n)
     x = (x + 1) / 2
     w /= 2
     if mu:
@@ -2021,29 +1637,8 @@ def roots_sh_legendre(n, mu=False):
         return x, w
 
 def sh_legendre(n, monic=False):
-    r"""Shifted Legendre polynomial.
-
-    Defined as :math:`P^*_n(x) = P_n(2x - 1)` for :math:`P_n` the nth
-    Legendre polynomial.
-
-    Parameters
-    ----------
-    n : int
-        Degree of the polynomial.
-    monic : bool, optional
-        If `True`, scale the leading coefficient to be 1. Default is
-        `False`.
-
-    Returns
-    -------
-    P : orthopoly1d
-        Shifted Legendre polynomial.
-
-    Notes
-    -----
-    The polynomials :math:`P^*_n` are orthogonal over :math:`[0, 1]`
-    with weight function 1.
-
+    """Returns the nth order shifted Legendre polynomial, P^*_n(x), orthogonal
+    over [0,1] with weighting function 1.
     """
     if n < 0:
         raise ValueError("n must be nonnegative.")
@@ -2052,30 +1647,18 @@ def sh_legendre(n, monic=False):
     if n == 0:
         return orthopoly1d([], [], 1.0, 1.0, wfunc, (0, 1), monic,
                            lambda x: eval_sh_legendre(n, x))
-    x, w, mu0 = roots_sh_legendre(n, mu=True)
+    x, w, mu0 = ps_roots(n, mu=True)
     hn = 1.0 / (2 * n + 1.0)
     kn = _gam(2 * n + 1) / _gam(n + 1)**2
     p = orthopoly1d(x, w, hn, kn, wfunc, limits=(0, 1), monic=monic,
                     eval_func=lambda x: eval_sh_legendre(n, x))
     return p
 
-
 # -----------------------------------------------------------------------------
-# Code for backwards compatibility
+# Vectorized functions for evaluation
 # -----------------------------------------------------------------------------
-
-# Import functions in case someone is still calling the orthogonal
-# module directly. (They shouldn't be; it's not in the public API).
-poch = cephes.poch
-
 from ._ufuncs import (binom, eval_jacobi, eval_sh_jacobi, eval_gegenbauer,
                       eval_chebyt, eval_chebyu, eval_chebys, eval_chebyc,
                       eval_sh_chebyt, eval_sh_chebyu, eval_legendre,
                       eval_sh_legendre, eval_genlaguerre, eval_laguerre,
                       eval_hermite, eval_hermitenorm)
-
-# Make the old root function names an alias for the new ones
-_modattrs = globals()
-for newfun, oldfun in _rootfuns_map.items():
-    _modattrs[oldfun] = _modattrs[newfun]
-    __all__.append(oldfun)

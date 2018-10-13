@@ -27,10 +27,10 @@
 # image data from electron microscopy and tomography.
 #
 # Spider home page:
-# https://spider.wadsworth.org/spider_doc/spider/docs/spider.html
+# http://spider.wadsworth.org/spider_doc/spider/docs/spider.html
 #
 # Details about the Spider image format:
-# https://spider.wadsworth.org/spider_doc/spider/docs/image_doc.html
+# http://spider.wadsworth.org/spider_doc/spider/docs/image_doc.html
 #
 
 from __future__ import print_function
@@ -48,9 +48,10 @@ def isInt(f):
             return 1
         else:
             return 0
-    except (ValueError, OverflowError):
+    except ValueError:
         return 0
-
+    except OverflowError:
+        return 0
 
 iforms = [1, 3, -11, -12, -21, -22]
 
@@ -74,6 +75,7 @@ def isSpiderHeader(t):
     labrec = int(h[13])   # no. records in file header
     labbyt = int(h[22])   # total no. of bytes in header
     lenbyt = int(h[23])   # record length in bytes
+    # print("labrec = %d, labbyt = %d, lenbyt = %d" % (labrec,labbyt,lenbyt))
     if labbyt != (labrec * lenbyt):
         return 0
     # looks like a valid header
@@ -81,8 +83,9 @@ def isSpiderHeader(t):
 
 
 def isSpiderImage(filename):
-    with open(filename, 'rb') as fp:
-        f = fp.read(92)   # read 23 * 4 bytes
+    fp = open(filename, 'rb')
+    f = fp.read(92)   # read 23 * 4 bytes
+    fp.close()
     t = struct.unpack('>23f', f)  # try big-endian first
     hdrlen = isSpiderHeader(t)
     if hdrlen == 0:
@@ -95,7 +98,6 @@ class SpiderImageFile(ImageFile.ImageFile):
 
     format = "SPIDER"
     format_description = "Spider 2D image"
-    _close_exclusive_fp_after_loading = False
 
     def _open(self):
         # check header
@@ -120,7 +122,7 @@ class SpiderImageFile(ImageFile.ImageFile):
         if iform != 1:
             raise SyntaxError("not a Spider 2D image")
 
-        self._size = int(h[12]), int(h[2])  # size in pixels (width, height)
+        self.size = int(h[12]), int(h[2])  # size in pixels (width, height)
         self.istack = int(h[24])
         self.imgnumber = int(h[27])
 
@@ -172,8 +174,8 @@ class SpiderImageFile(ImageFile.ImageFile):
     def seek(self, frame):
         if self.istack == 0:
             raise EOFError("attempt to seek in a non-stack file")
-        if not self._seek_check(frame):
-            return
+        if frame >= self._nimages:
+            raise EOFError("attempt to seek past end of file")
         self.stkoffset = self.hdrlen + frame * (self.hdrlen + self.imgbytes)
         self.fp = self.__fp
         self.fp.seek(self.stkoffset)
@@ -199,7 +201,7 @@ class SpiderImageFile(ImageFile.ImageFile):
 
 # given a list of filenames, return a list of images
 def loadImageSeries(filelist=None):
-    """create a list of Image.images for use in montage"""
+    " create a list of Image.images for use in montage "
     if filelist is None or len(filelist) < 1:
         return
 
@@ -265,10 +267,16 @@ def _save(im, fp, filename):
         raise IOError("Error creating Spider header")
 
     # write the SPIDER header
+    try:
+        fp = open(filename, 'wb')
+    except:
+        raise IOError("Unable to open %s for writing" % filename)
     fp.writelines(hdr)
 
     rawmode = "F;32NF"  # 32-bit native floating point
     ImageFile._save(im, fp, [("raw", (0, 0)+im.size, 0, (rawmode, 0, 1))])
+
+    fp.close()
 
 
 def _save_spider(im, fp, filename):
@@ -279,13 +287,12 @@ def _save_spider(im, fp, filename):
 
 # --------------------------------------------------------------------
 
-
 Image.register_open(SpiderImageFile.format, SpiderImageFile)
 Image.register_save(SpiderImageFile.format, _save_spider)
 
 if __name__ == "__main__":
 
-    if len(sys.argv) < 2:
+    if not sys.argv[1:]:
         print("Syntax: python SpiderImagePlugin.py [infile] [outfile]")
         sys.exit()
 
@@ -293,6 +300,10 @@ if __name__ == "__main__":
     if not isSpiderImage(filename):
         print("input image must be in Spider format")
         sys.exit()
+
+    outfile = ""
+    if len(sys.argv[1:]) > 1:
+        outfile = sys.argv[2]
 
     im = Image.open(filename)
     print("image: " + str(im))
@@ -302,9 +313,7 @@ if __name__ == "__main__":
     print("max, min: ", end=' ')
     print(im.getextrema())
 
-    if len(sys.argv) > 2:
-        outfile = sys.argv[2]
-
+    if outfile != "":
         # perform some image operation
         im = im.transpose(Image.FLIP_LEFT_RIGHT)
         print(

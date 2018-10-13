@@ -3,13 +3,12 @@
 
 from __future__ import division, print_function, absolute_import
 
-import operator
+import warnings
 import threading
 import sys
-import timeit
 
 from . import sigtools, dlti
-from ._upfirdn import upfirdn, _output_len
+from ._upfirdn import upfirdn, _UpFIRDn, _output_len
 from scipy._lib.six import callable
 from scipy._lib._version import NumpyVersion
 from scipy import fftpack, linalg
@@ -17,15 +16,14 @@ from numpy import (allclose, angle, arange, argsort, array, asarray,
                    atleast_1d, atleast_2d, cast, dot, exp, expand_dims,
                    iscomplexobj, mean, ndarray, newaxis, ones, pi,
                    poly, polyadd, polyder, polydiv, polymul, polysub, polyval,
-                   product, r_, ravel, real_if_close, reshape,
-                   roots, sort, take, transpose, unique, where, zeros,
+                   prod, product, r_, ravel, real_if_close, reshape,
+                   roots, sort, sum, take, transpose, unique, where, zeros,
                    zeros_like)
 import numpy as np
-import math
 from scipy.special import factorial
 from .windows import get_window
 from ._arraytools import axis_slice, axis_reverse, odd_ext, even_ext, const_ext
-from .filter_design import cheby1, _validate_sos
+from .filter_design import cheby1
 from .fir_filter_design import firwin
 
 if sys.version_info.major >= 3 and sys.version_info.minor >= 5:
@@ -39,7 +37,7 @@ __all__ = ['correlate', 'fftconvolve', 'convolve', 'convolve2d', 'correlate2d',
            'lfiltic', 'sosfilt', 'deconvolve', 'hilbert', 'hilbert2',
            'cmplx_sort', 'unique_roots', 'invres', 'invresz', 'residue',
            'residuez', 'resample', 'resample_poly', 'detrend',
-           'lfilter_zi', 'sosfilt_zi', 'sosfiltfilt', 'choose_conv_method',
+           'lfilter_zi', 'sosfilt_zi', 'sosfiltfilt',
            'filtfilt', 'decimate', 'vectorstrength']
 
 
@@ -56,32 +54,38 @@ _rfft_lock = threading.Lock()
 
 def _valfrommode(mode):
     try:
-        return _modedict[mode]
+        val = _modedict[mode]
     except KeyError:
-        raise ValueError("Acceptable mode flags are 'valid',"
-                         " 'same', or 'full'.")
+        if mode not in [0, 1, 2]:
+            raise ValueError("Acceptable mode flags are 'valid' (0),"
+                             " 'same' (1), or 'full' (2).")
+        val = mode
+    return val
 
 
 def _bvalfromboundary(boundary):
     try:
-        return _boundarydict[boundary] << 2
+        val = _boundarydict[boundary] << 2
     except KeyError:
-        raise ValueError("Acceptable boundary flags are 'fill', 'circular' "
-                         "(or 'wrap'), and 'symmetric' (or 'symm').")
+        if val not in [0, 1, 2]:
+            raise ValueError("Acceptable boundary flags are 'fill', 'wrap'"
+                             " (or 'circular'), \n  and 'symm'"
+                             " (or 'symmetric').")
+        val = boundary << 2
+    return val
 
 
 def _inputs_swap_needed(mode, shape1, shape2):
     """
-    If in 'valid' mode, returns whether or not the input arrays need to be
-    swapped depending on whether `shape1` is at least as large as `shape2` in
-    every dimension.
-
-    This is important for some of the correlation and convolution
-    implementations in this module, where the larger array input needs to come
-    before the smaller array input when operating in this mode.
-
+    If in 'valid' mode, checks whether or not one of the array shapes
+    is at least as large as the other in every dimension. Returns whether
+    or not the input arrays need to be swapped depending on whether shape2
+    is larger than shape1. This is important for some of the correlation and
+    convolution implementations in this module, where the larger array input
+    needs to come before the smaller array input when operating in this mode.
     Note that if the mode provided is not 'valid', False is immediately
     returned.
+
     """
     if mode == 'valid':
         ok1, ok2 = True, True
@@ -101,8 +105,8 @@ def _inputs_swap_needed(mode, shape1, shape2):
     return False
 
 
-def correlate(in1, in2, mode='full', method='auto'):
-    r"""
+def correlate(in1, in2, mode='full'):
+    """
     Cross-correlate two N-dimensional arrays.
 
     Cross-correlate `in1` and `in2`, with the output size determined by the
@@ -114,6 +118,8 @@ def correlate(in1, in2, mode='full', method='auto'):
         First input.
     in2 : array_like
         Second input. Should have the same number of dimensions as `in1`.
+        If operating in 'valid' mode, either `in1` or `in2` must be
+        at least as large as the other in every dimension.
     mode : str {'full', 'valid', 'same'}, optional
         A string indicating the size of the output:
 
@@ -122,25 +128,10 @@ def correlate(in1, in2, mode='full', method='auto'):
            of the inputs. (Default)
         ``valid``
            The output consists only of those elements that do not
-           rely on the zero-padding. In 'valid' mode, either `in1` or `in2`
-           must be at least as large as the other in every dimension.
+           rely on the zero-padding.
         ``same``
            The output is the same size as `in1`, centered
            with respect to the 'full' output.
-    method : str {'auto', 'direct', 'fft'}, optional
-        A string indicating which method to use to calculate the correlation.
-
-        ``direct``
-           The correlation is determined directly from sums, the definition of
-           correlation.
-        ``fft``
-           The Fast Fourier Transform is used to perform the correlation more
-           quickly (only available for numerical arrays.)
-        ``auto``
-           Automatically chooses direct or Fourier method based on an estimate
-           of which is faster (default).  See `convolve` Notes for more detail.
-
-           .. versionadded:: 0.19.0
 
     Returns
     -------
@@ -148,32 +139,12 @@ def correlate(in1, in2, mode='full', method='auto'):
         An N-dimensional array containing a subset of the discrete linear
         cross-correlation of `in1` with `in2`.
 
-    See Also
-    --------
-    choose_conv_method : contains more documentation on `method`.
-
     Notes
     -----
-    The correlation z of two d-dimensional arrays x and y is defined as::
+    The correlation z of two d-dimensional arrays x and y is defined as:
 
-        z[...,k,...] = sum[..., i_l, ...] x[..., i_l,...] * conj(y[..., i_l - k,...])
-
-    This way, if x and y are 1-D arrays and ``z = correlate(x, y, 'full')``
-    then
-
-    .. math::
-
-          z[k] = (x * y)(k - N + 1)
-               = \sum_{l=0}^{||x||-1}x_l y_{l-k+N-1}^{*}
-
-    for :math:`k = 0, 1, ..., ||x|| + ||y|| - 2`
-
-    where :math:`||x||` is the length of ``x``, :math:`N = \max(||x||,||y||)`,
-    and :math:`y_m` is 0 when m is outside the range of y.
-
-    ``method='fft'`` only works for numerical arrays as it relies on
-    `fftconvolve`. In certain cases (i.e., arrays of objects or when
-    rounding integers can lose precision), ``method='direct'`` is always used.
+      z[...,k,...] = sum[..., i_l, ...]
+                         x[..., i_l,...] * conj(y[..., i_l + k,...])
 
     Examples
     --------
@@ -205,11 +176,6 @@ def correlate(in1, in2, mode='full', method='auto'):
     in1 = asarray(in1)
     in2 = asarray(in2)
 
-    if in1.ndim == in2.ndim == 0:
-        return in1 * in2.conj()
-    elif in1.ndim != in2.ndim:
-        raise ValueError("in1 and in2 should have the same dimensionality")
-
     # Don't use _valfrommode, since correlate should not accept numeric modes
     try:
         val = _modedict[mode]
@@ -217,55 +183,54 @@ def correlate(in1, in2, mode='full', method='auto'):
         raise ValueError("Acceptable mode flags are 'valid',"
                          " 'same', or 'full'.")
 
-    # this either calls fftconvolve or this function with method=='direct'
-    if method in ('fft', 'auto'):
-        return convolve(in1, _reverse_and_conj(in2), mode, method)
+    if in1.ndim == in2.ndim == 0:
+        return in1 * in2
+    elif not in1.ndim == in2.ndim:
+        raise ValueError("in1 and in2 should have the same dimensionality")
 
-    elif method == 'direct':
-        # fastpath to faster numpy.correlate for 1d inputs when possible
-        if _np_conv_ok(in1, in2, mode):
-            return np.correlate(in1, in2, mode)
+    # numpy is significantly faster for 1d (but numpy's 'same' mode uses
+    # the size of the larger input, not the first.)
+    if in1.ndim == in2.ndim == 1 and (in1.size >= in2.size or mode != 'same'):
+        return np.correlate(in1, in2, mode)
 
-        # _correlateND is far slower when in2.size > in1.size, so swap them
-        # and then undo the effect afterward if mode == 'full'.  Also, it fails
-        # with 'valid' mode if in2 is larger than in1, so swap those, too.
-        # Don't swap inputs for 'same' mode, since shape of in1 matters.
-        swapped_inputs = ((mode == 'full') and (in2.size > in1.size) or
-                          _inputs_swap_needed(mode, in1.shape, in2.shape))
+    # _correlateND is far slower when in2.size > in1.size, so swap them
+    # and then undo the effect afterward if mode == 'full'.  Also, it fails
+    # with 'valid' mode if in2 is larger than in1, so swap those, too.
+    # Don't swap inputs for 'same' mode, since shape of in1 matters.
+    swapped_inputs = ((mode == 'full') and (in2.size > in1.size) or
+                      _inputs_swap_needed(mode, in1.shape, in2.shape))
 
-        if swapped_inputs:
-            in1, in2 = in2, in1
+    if swapped_inputs:
+        in1, in2 = in2, in1
 
-        if mode == 'valid':
-            ps = [i - j + 1 for i, j in zip(in1.shape, in2.shape)]
-            out = np.empty(ps, in1.dtype)
+    if mode == 'valid':
+        ps = [i - j + 1 for i, j in zip(in1.shape, in2.shape)]
+        out = np.empty(ps, in1.dtype)
 
-            z = sigtools._correlateND(in1, in2, out, val)
-
-        else:
-            ps = [i + j - 1 for i, j in zip(in1.shape, in2.shape)]
-
-            # zero pad input
-            in1zpadded = np.zeros(ps, in1.dtype)
-            sc = [slice(0, i) for i in in1.shape]
-            in1zpadded[sc] = in1.copy()
-
-            if mode == 'full':
-                out = np.empty(ps, in1.dtype)
-            elif mode == 'same':
-                out = np.empty(in1.shape, in1.dtype)
-
-            z = sigtools._correlateND(in1zpadded, in2, out, val)
-
-        if swapped_inputs:
-            # Reverse and conjugate to undo the effect of swapping inputs
-            z = _reverse_and_conj(z)
-
-        return z
+        z = sigtools._correlateND(in1, in2, out, val)
 
     else:
-        raise ValueError("Acceptable method flags are 'auto',"
-                         " 'direct', or 'fft'.")
+        ps = [i + j - 1 for i, j in zip(in1.shape, in2.shape)]
+
+        # zero pad input
+        in1zpadded = np.zeros(ps, in1.dtype)
+        sc = [slice(0, i) for i in in1.shape]
+        in1zpadded[sc] = in1.copy()
+
+        if mode == 'full':
+            out = np.empty(ps, in1.dtype)
+        elif mode == 'same':
+            out = np.empty(in1.shape, in1.dtype)
+
+        z = sigtools._correlateND(in1zpadded, in2, out, val)
+
+    if swapped_inputs:
+        # Reverse in all dimensions and conjugate to undo the effect of
+        # swapping inputs
+        reverse = [slice(None, None, -1)] * z.ndim
+        z = z[reverse].conj()
+
+    return z
 
 
 def _centered(arr, newshape):
@@ -288,15 +253,14 @@ def fftconvolve(in1, in2, mode="full"):
     but can be slower when only a few output values are needed, and can only
     output float arrays (int or object array inputs will be cast to float).
 
-    As of v0.19, `convolve` automatically chooses this method or the direct
-    method based on an estimation of which is faster.
-
     Parameters
     ----------
     in1 : array_like
         First input.
     in2 : array_like
         Second input. Should have the same number of dimensions as `in1`.
+        If operating in 'valid' mode, either `in1` or `in2` must be
+        at least as large as the other in every dimension.
     mode : str {'full', 'valid', 'same'}, optional
         A string indicating the size of the output:
 
@@ -305,8 +269,7 @@ def fftconvolve(in1, in2, mode="full"):
            of the inputs. (Default)
         ``valid``
            The output consists only of those elements that do not
-           rely on the zero-padding. In 'valid' mode, either `in1` or `in2`
-           must be at least as large as the other in every dimension.
+           rely on the zero-padding.
         ``same``
            The output is the same size as `in1`, centered
            with respect to the 'full' output.
@@ -319,7 +282,8 @@ def fftconvolve(in1, in2, mode="full"):
 
     Examples
     --------
-    Autocorrelation of white noise is an impulse.
+    Autocorrelation of white noise is an impulse.  (This is at least 100 times
+    as fast as `convolve`.)
 
     >>> from scipy import signal
     >>> sig = np.random.randn(1000)
@@ -370,8 +334,8 @@ def fftconvolve(in1, in2, mode="full"):
 
     s1 = array(in1.shape)
     s2 = array(in2.shape)
-    complex_result = (np.issubdtype(in1.dtype, np.complexfloating) or
-                      np.issubdtype(in2.dtype, np.complexfloating))
+    complex_result = (np.issubdtype(in1.dtype, complex) or
+                      np.issubdtype(in2.dtype, complex))
     shape = s1 + s2 - 1
 
     # Check that input sizes are compatible with 'valid' mode
@@ -414,262 +378,7 @@ def fftconvolve(in1, in2, mode="full"):
                          " 'same', or 'full'.")
 
 
-def _numeric_arrays(arrays, kinds='buifc'):
-    """
-    See if a list of arrays are all numeric.
-
-    Parameters
-    ----------
-    ndarrays : array or list of arrays
-        arrays to check if numeric.
-    numeric_kinds : string-like
-        The dtypes of the arrays to be checked. If the dtype.kind of
-        the ndarrays are not in this string the function returns False and
-        otherwise returns True.
-    """
-    if type(arrays) == ndarray:
-        return arrays.dtype.kind in kinds
-    for array_ in arrays:
-        if array_.dtype.kind not in kinds:
-            return False
-    return True
-
-
-def _prod(iterable):
-    """
-    Product of a list of numbers.
-    Faster than np.prod for short lists like array shapes.
-    """
-    product = 1
-    for x in iterable:
-        product *= x
-    return product
-
-
-def _fftconv_faster(x, h, mode):
-    """
-    See if using `fftconvolve` or `_correlateND` is faster. The boolean value
-    returned depends on the sizes and shapes of the input values.
-
-    The big O ratios were found to hold across different machines, which makes
-    sense as it's the ratio that matters (the effective speed of the computer
-    is found in both big O constants). Regardless, this had been tuned on an
-    early 2015 MacBook Pro with 8GB RAM and an Intel i5 processor.
-    """
-    if mode == 'full':
-        out_shape = [n + k - 1 for n, k in zip(x.shape, h.shape)]
-        big_O_constant = 10963.92823819 if x.ndim == 1 else 8899.1104874
-    elif mode == 'same':
-        out_shape = x.shape
-        if x.ndim == 1:
-            if h.size <= x.size:
-                big_O_constant = 7183.41306773
-            else:
-                big_O_constant = 856.78174111
-        else:
-            big_O_constant = 34519.21021589
-    elif mode == 'valid':
-        out_shape = [n - k + 1 for n, k in zip(x.shape, h.shape)]
-        big_O_constant = 41954.28006344 if x.ndim == 1 else 66453.24316434
-    else:
-        raise ValueError("Acceptable mode flags are 'valid',"
-                         " 'same', or 'full'.")
-
-    # see whether the Fourier transform convolution method or the direct
-    # convolution method is faster (discussed in scikit-image PR #1792)
-    direct_time = (x.size * h.size * _prod(out_shape))
-    fft_time = sum(n * math.log(n) for n in (x.shape + h.shape +
-                                             tuple(out_shape)))
-    return big_O_constant * fft_time < direct_time
-
-
-def _reverse_and_conj(x):
-    """
-    Reverse array `x` in all dimensions and perform the complex conjugate
-    """
-    reverse = [slice(None, None, -1)] * x.ndim
-    return x[reverse].conj()
-
-
-def _np_conv_ok(volume, kernel, mode):
-    """
-    See if numpy supports convolution of `volume` and `kernel` (i.e. both are
-    1D ndarrays and of the appropriate shape).  Numpy's 'same' mode uses the
-    size of the larger input, while Scipy's uses the size of the first input.
-
-    Invalid mode strings will return False and be caught by the calling func.
-    """
-    if volume.ndim == kernel.ndim == 1:
-        if mode in ('full', 'valid'):
-            return True
-        elif mode == 'same':
-            return volume.size >= kernel.size
-    else:
-        return False
-
-
-def _timeit_fast(stmt="pass", setup="pass", repeat=3):
-    """
-    Returns the time the statement/function took, in seconds.
-
-    Faster, less precise version of IPython's timeit. `stmt` can be a statement
-    written as a string or a callable.
-
-    Will do only 1 loop (like IPython's timeit) with no repetitions
-    (unlike IPython) for very slow functions.  For fast functions, only does
-    enough loops to take 5 ms, which seems to produce similar results (on
-    Windows at least), and avoids doing an extraneous cycle that isn't
-    measured.
-
-    """
-    timer = timeit.Timer(stmt, setup)
-
-    # determine number of calls per rep so total time for 1 rep >= 5 ms
-    x = 0
-    for p in range(0, 10):
-        number = 10**p
-        x = timer.timeit(number)  # seconds
-        if x >= 5e-3 / 10:  # 5 ms for final test, 1/10th that for this one
-            break
-    if x > 1:  # second
-        # If it's macroscopic, don't bother with repetitions
-        best = x
-    else:
-        number *= 10
-        r = timer.repeat(repeat, number)
-        best = min(r)
-
-    sec = best / number
-    return sec
-
-
-def choose_conv_method(in1, in2, mode='full', measure=False):
-    """
-    Find the fastest convolution/correlation method.
-
-    This primarily exists to be called during the ``method='auto'`` option in
-    `convolve` and `correlate`, but can also be used when performing many
-    convolutions of the same input shapes and dtypes, determining
-    which method to use for all of them, either to avoid the overhead of the
-    'auto' option or to use accurate real-world measurements.
-
-    Parameters
-    ----------
-    in1 : array_like
-        The first argument passed into the convolution function.
-    in2 : array_like
-        The second argument passed into the convolution function.
-    mode : str {'full', 'valid', 'same'}, optional
-        A string indicating the size of the output:
-
-        ``full``
-           The output is the full discrete linear convolution
-           of the inputs. (Default)
-        ``valid``
-           The output consists only of those elements that do not
-           rely on the zero-padding.
-        ``same``
-           The output is the same size as `in1`, centered
-           with respect to the 'full' output.
-    measure : bool, optional
-        If True, run and time the convolution of `in1` and `in2` with both
-        methods and return the fastest. If False (default), predict the fastest
-        method using precomputed values.
-
-    Returns
-    -------
-    method : str
-        A string indicating which convolution method is fastest, either
-        'direct' or 'fft'
-    times : dict, optional
-        A dictionary containing the times (in seconds) needed for each method.
-        This value is only returned if ``measure=True``.
-
-    See Also
-    --------
-    convolve
-    correlate
-
-    Notes
-    -----
-    For large n, ``measure=False`` is accurate and can quickly determine the
-    fastest method to perform the convolution.  However, this is not as
-    accurate for small n (when any dimension in the input or output is small).
-
-    In practice, we found that this function estimates the faster method up to
-    a multiplicative factor of 5 (i.e., the estimated method is *at most* 5
-    times slower than the fastest method). The estimation values were tuned on
-    an early 2015 MacBook Pro with 8GB RAM but we found that the prediction
-    held *fairly* accurately across different machines.
-
-    If ``measure=True``, time the convolutions. Because this function uses
-    `fftconvolve`, an error will be thrown if it does not support the inputs.
-    There are cases when `fftconvolve` supports the inputs but this function
-    returns `direct` (e.g., to protect against floating point integer
-    precision).
-
-    .. versionadded:: 0.19
-
-    Examples
-    --------
-    Estimate the fastest method for a given input:
-
-    >>> from scipy import signal
-    >>> a = np.random.randn(1000)
-    >>> b = np.random.randn(1000000)
-    >>> method = signal.choose_conv_method(a, b, mode='same')
-    >>> method
-    'fft'
-
-    This can then be applied to other arrays of the same dtype and shape:
-
-    >>> c = np.random.randn(1000)
-    >>> d = np.random.randn(1000000)
-    >>> # `method` works with correlate and convolve
-    >>> corr1 = signal.correlate(a, b, mode='same', method=method)
-    >>> corr2 = signal.correlate(c, d, mode='same', method=method)
-    >>> conv1 = signal.convolve(a, b, mode='same', method=method)
-    >>> conv2 = signal.convolve(c, d, mode='same', method=method)
-
-    """
-    volume = asarray(in1)
-    kernel = asarray(in2)
-
-    if measure:
-        times = {}
-        for method in ['fft', 'direct']:
-            times[method] = _timeit_fast(lambda: convolve(volume, kernel,
-                                         mode=mode, method=method))
-
-        chosen_method = 'fft' if times['fft'] < times['direct'] else 'direct'
-        return chosen_method, times
-
-    # fftconvolve doesn't support complex256
-    fftconv_unsup = "complex256" if sys.maxsize > 2**32 else "complex192"
-    if hasattr(np, fftconv_unsup):
-        if volume.dtype == fftconv_unsup or kernel.dtype == fftconv_unsup:
-            return 'direct'
-
-    # for integer input,
-    # catch when more precision required than float provides (representing an
-    # integer as float can lose precision in fftconvolve if larger than 2**52)
-    if any([_numeric_arrays([x], kinds='ui') for x in [volume, kernel]]):
-        max_value = int(np.abs(volume).max()) * int(np.abs(kernel).max())
-        max_value *= int(min(volume.size, kernel.size))
-        if max_value > 2**np.finfo('float').nmant - 1:
-            return 'direct'
-
-    if _numeric_arrays([volume, kernel], kinds='b'):
-        return 'direct'
-
-    if _numeric_arrays([volume, kernel]):
-        if _fftconv_faster(volume, kernel, mode):
-            return 'fft'
-
-    return 'direct'
-
-
-def convolve(in1, in2, mode='full', method='auto'):
+def convolve(in1, in2, mode='full'):
     """
     Convolve two N-dimensional arrays.
 
@@ -682,6 +391,8 @@ def convolve(in1, in2, mode='full', method='auto'):
         First input.
     in2 : array_like
         Second input. Should have the same number of dimensions as `in1`.
+        If operating in 'valid' mode, either `in1` or `in2` must be
+        at least as large as the other in every dimension.
     mode : str {'full', 'valid', 'same'}, optional
         A string indicating the size of the output:
 
@@ -690,25 +401,10 @@ def convolve(in1, in2, mode='full', method='auto'):
            of the inputs. (Default)
         ``valid``
            The output consists only of those elements that do not
-           rely on the zero-padding. In 'valid' mode, either `in1` or `in2`
-           must be at least as large as the other in every dimension.
+           rely on the zero-padding.
         ``same``
            The output is the same size as `in1`, centered
            with respect to the 'full' output.
-    method : str {'auto', 'direct', 'fft'}, optional
-        A string indicating which method to use to calculate the convolution.
-
-        ``direct``
-           The convolution is determined directly from sums, the definition of
-           convolution.
-        ``fft``
-           The Fourier Transform is used to perform the convolution by calling
-           `fftconvolve`.
-        ``auto``
-           Automatically chooses direct or Fourier method based on an estimate
-           of which is faster (default).  See Notes for more detail.
-
-           .. versionadded:: 0.19.0
 
     Returns
     -------
@@ -716,21 +412,10 @@ def convolve(in1, in2, mode='full', method='auto'):
         An N-dimensional array containing a subset of the discrete linear
         convolution of `in1` with `in2`.
 
-    See Also
+    See also
     --------
     numpy.polymul : performs polynomial multiplication (same operation, but
                     also accepts poly1d objects)
-    choose_conv_method : chooses the fastest appropriate convolution method
-    fftconvolve
-
-    Notes
-    -----
-    By default, `convolve` and `correlate` use ``method='auto'``, which calls
-    `choose_conv_method` to choose the fastest method using pre-computed
-    values (`choose_conv_method` can also measure real-world timing with a
-    keyword argument). Because `fftconvolve` relies on floating point numbers,
-    there are certain constraints that may force `method=direct` (more detail
-    in `choose_conv_method` docstring).
 
     Examples
     --------
@@ -761,32 +446,22 @@ def convolve(in1, in2, mode='full', method='auto'):
 
     if volume.ndim == kernel.ndim == 0:
         return volume * kernel
-    elif volume.ndim != kernel.ndim:
-        raise ValueError("volume and kernel should have the same "
-                         "dimensionality")
 
     if _inputs_swap_needed(mode, volume.shape, kernel.shape):
         # Convolution is commutative; order doesn't have any effect on output
         volume, kernel = kernel, volume
 
-    if method == 'auto':
-        method = choose_conv_method(volume, kernel, mode=mode)
+    # fastpath to faster numpy 1d convolve (but numpy's 'same' mode uses the
+    # size of the larger input, not the first.)
+    if volume.ndim == kernel.ndim == 1 and (volume.size >= kernel.size or
+                                            mode != 'same'):
+        return np.convolve(volume, kernel, mode)
 
-    if method == 'fft':
-        out = fftconvolve(volume, kernel, mode=mode)
-        result_type = np.result_type(volume, kernel)
-        if result_type.kind in {'u', 'i'}:
-            out = np.around(out)
-        return out.astype(result_type)
-    elif method == 'direct':
-        # fastpath to faster numpy.convolve for 1d inputs when possible
-        if _np_conv_ok(volume, kernel, mode):
-            return np.convolve(volume, kernel, mode)
+    # Reverse in all dimensions
+    reverse = [slice(None, None, -1)] * kernel.ndim
 
-        return correlate(volume, _reverse_and_conj(kernel), mode, 'direct')
-    else:
-        raise ValueError("Acceptable method flags are 'auto',"
-                         " 'direct', or 'fft'.")
+    # .conj() does nothing to real arrays and is faster than iscomplexobj()
+    return correlate(volume, kernel[reverse].conj(), mode)
 
 
 def order_filter(a, domain, rank):
@@ -929,8 +604,8 @@ def wiener(im, mysize=None, noise=None):
     lMean = correlate(im, ones(mysize), 'same') / product(mysize, axis=0)
 
     # Estimate the local variance
-    lVar = (correlate(im ** 2, ones(mysize), 'same') /
-            product(mysize, axis=0) - lMean ** 2)
+    lVar = (correlate(im ** 2, ones(mysize), 'same') / product(mysize, axis=0)
+            - lMean ** 2)
 
     # Estimate the noise power if needed.
     if noise is None:
@@ -957,6 +632,8 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
         First input.
     in2 : array_like
         Second input. Should have the same number of dimensions as `in1`.
+        If operating in 'valid' mode, either `in1` or `in2` must be
+        at least as large as the other in every dimension.
     mode : str {'full', 'valid', 'same'}, optional
         A string indicating the size of the output:
 
@@ -965,11 +642,11 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
            of the inputs. (Default)
         ``valid``
            The output consists only of those elements that do not
-           rely on the zero-padding. In 'valid' mode, either `in1` or `in2`
-           must be at least as large as the other in every dimension.
+           rely on the zero-padding.
         ``same``
            The output is the same size as `in1`, centered
            with respect to the 'full' output.
+
     boundary : str {'fill', 'wrap', 'symm'}, optional
         A flag indicating how to handle boundaries:
 
@@ -1029,7 +706,12 @@ def convolve2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
 
     val = _valfrommode(mode)
     bval = _bvalfromboundary(boundary)
-    out = sigtools._convolve2d(in1, in2, 1, val, bval, fillvalue)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', np.ComplexWarning)
+        # FIXME: some cast generates a warning here
+        out = sigtools._convolve2d(in1, in2, 1, val, bval, fillvalue)
+
     return out
 
 
@@ -1046,6 +728,8 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
         First input.
     in2 : array_like
         Second input. Should have the same number of dimensions as `in1`.
+        If operating in 'valid' mode, either `in1` or `in2` must be
+        at least as large as the other in every dimension.
     mode : str {'full', 'valid', 'same'}, optional
         A string indicating the size of the output:
 
@@ -1054,11 +738,11 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
            of the inputs. (Default)
         ``valid``
            The output consists only of those elements that do not
-           rely on the zero-padding. In 'valid' mode, either `in1` or `in2`
-           must be at least as large as the other in every dimension.
+           rely on the zero-padding.
         ``same``
            The output is the same size as `in1`, centered
            with respect to the 'full' output.
+
     boundary : str {'fill', 'wrap', 'symm'}, optional
         A flag indicating how to handle boundaries:
 
@@ -1120,7 +804,11 @@ def correlate2d(in1, in2, mode='full', boundary='fill', fillvalue=0):
 
     val = _valfrommode(mode)
     bval = _bvalfromboundary(boundary)
-    out = sigtools._convolve2d(in1, in2.conj(), 0, val, bval, fillvalue)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore', np.ComplexWarning)
+        # FIXME: some cast generates a warning here
+        out = sigtools._convolve2d(in1, in2, 0, val, bval, fillvalue)
 
     if swapped_inputs:
         out = out[::-1, ::-1]
@@ -1250,9 +938,8 @@ def lfilter(b, a, x, axis=-1, zi=None):
     >>> from scipy import signal
     >>> import matplotlib.pyplot as plt
     >>> t = np.linspace(-1, 1, 201)
-    >>> x = (np.sin(2*np.pi*0.75*t*(1-t) + 2.1) +
-    ...      0.1*np.sin(2*np.pi*1.25*t + 1) +
-    ...      0.18*np.cos(2*np.pi*3.85*t))
+    >>> x = (np.sin(2*np.pi*0.75*t*(1-t) + 2.1) + 0.1*np.sin(2*np.pi*1.25*t + 1)
+    ...      + 0.18*np.cos(2*np.pi*3.85*t))
     >>> xn = x + np.random.randn(len(t)) * 0.08
 
     Create an order 3 lowpass butterworth filter:
@@ -1297,8 +984,7 @@ def lfilter(b, a, x, axis=-1, zi=None):
         x = np.asarray(x)
         inputs = [b, a, x]
         if zi is not None:
-            # _linear_filter does not broadcast zi, but does do expansion of
-            # singleton dims.
+            # _linear_filter does not broadcast zi, but does do expansion of singleton dims.
             zi = np.asarray(zi)
             if zi.ndim != x.ndim:
                 raise ValueError('object of too small depth for desired array')
@@ -1321,8 +1007,7 @@ def lfilter(b, a, x, axis=-1, zi=None):
                         raise ValueError('Unexpected shape for zi: expected '
                                          '%s, found %s.' %
                                          (expected_shape, zi.shape))
-                zi = np.lib.stride_tricks.as_strided(zi, expected_shape,
-                                                     strides)
+                zi = np.lib.stride_tricks.as_strided(zi, expected_shape, strides)
             inputs.append(zi)
         dtype = np.result_type(*inputs)
 
@@ -1358,7 +1043,7 @@ def lfilter(b, a, x, axis=-1, zi=None):
 
 def lfiltic(b, a, y, x=None):
     """
-    Construct initial conditions for lfilter given input and output vectors.
+    Construct initial conditions for lfilter.
 
     Given a linear filter (b, a) and initial conditions on the output `y`
     and the input `x`, return the initial conditions on the state vector zi
@@ -1416,16 +1101,16 @@ def lfiltic(b, a, y, x=None):
         y = r_[y, zeros(N - L)]
 
     for m in range(M):
-        zi[m] = np.sum(b[m + 1:] * x[:M - m], axis=0)
+        zi[m] = sum(b[m + 1:] * x[:M - m], axis=0)
 
     for m in range(N):
-        zi[m] -= np.sum(a[m + 1:] * y[:N - m], axis=0)
+        zi[m] -= sum(a[m + 1:] * y[:N - m], axis=0)
 
     return zi
 
 
 def deconvolve(signal, divisor):
-    """Deconvolves ``divisor`` out of ``signal`` using inverse filtering.
+    """Deconvolves ``divisor`` out of ``signal``.
 
     Returns the quotient and remainder such that
     ``signal = convolve(divisor, quotient) + remainder``
@@ -1459,7 +1144,7 @@ def deconvolve(signal, divisor):
     >>> recovered
     array([ 0.,  1.,  0.,  0.,  1.,  1.,  0.,  0.])
 
-    See Also
+    See also
     --------
     numpy.polydiv : performs polynomial division (same operation, but
                     also accepts poly1d objects)
@@ -1473,8 +1158,8 @@ def deconvolve(signal, divisor):
         quot = []
         rem = num
     else:
-        input = zeros(N - D + 1, float)
-        input[0] = 1
+        input = ones(N - D + 1, float)
+        input[1:] = 0
         quot = lfilter(num, den, input)
         rem = num - convolve(den, quot, mode='full')
     return quot, rem
@@ -1499,10 +1184,6 @@ def hilbert(x, N=None, axis=-1):
     -------
     xa : ndarray
         Analytic signal of `x`, of each 1-D array along `axis`
-
-    See Also
-    --------
-    scipy.fftpack.hilbert : Return Hilbert transform of a periodic sequence x.
 
     Notes
     -----
@@ -1539,15 +1220,14 @@ def hilbert(x, N=None, axis=-1):
     >>> signal *= (1.0 + 0.5 * np.sin(2.0*np.pi*3.0*t) )
 
     The amplitude envelope is given by magnitude of the analytic signal. The
-    instantaneous frequency can be obtained by differentiating the
-    instantaneous phase in respect to time. The instantaneous phase corresponds
-    to the phase angle of the analytic signal.
+    instantaneous frequency can be obtained by differentiating the instantaneous
+    phase in respect to time. The instantaneous phase corresponds to the phase
+    angle of the analytic signal.
 
     >>> analytic_signal = hilbert(signal)
     >>> amplitude_envelope = np.abs(analytic_signal)
     >>> instantaneous_phase = np.unwrap(np.angle(analytic_signal))
-    >>> instantaneous_frequency = (np.diff(instantaneous_phase) /
-    ...                            (2.0*np.pi) * fs)
+    >>> instantaneous_frequency = np.diff(instantaneous_phase) / (2.0*np.pi) * fs
 
     >>> fig = plt.figure()
     >>> ax0 = fig.add_subplot(211)
@@ -1565,9 +1245,8 @@ def hilbert(x, N=None, axis=-1):
     .. [1] Wikipedia, "Analytic signal".
            http://en.wikipedia.org/wiki/Analytic_signal
     .. [2] Leon Cohen, "Time-Frequency Analysis", 1995. Chapter 2.
-    .. [3] Alan V. Oppenheim, Ronald W. Schafer. Discrete-Time Signal
-           Processing, Third Edition, 2009. Chapter 12.
-           ISBN 13: 978-1292-02572-8
+    .. [3] Alan V. Oppenheim, Ronald W. Schafer. Discrete-Time Signal Processing,
+           Third Edition, 2009. Chapter 12. ISBN 13: 978-1292-02572-8
 
     """
     x = asarray(x)
@@ -1669,16 +1348,6 @@ def cmplx_sort(p):
         Sorted roots.
     indx : ndarray
         Array of indices needed to sort the input `p`.
-
-    Examples
-    --------
-    >>> from scipy import signal
-    >>> vals = [1, 4, 1+1.j, 3]
-    >>> p_sorted, indx = signal.cmplx_sort(vals)
-    >>> p_sorted
-    array([1.+0.j, 1.+1.j, 3.+0.j, 4.+0.j])
-    >>> indx
-    array([0, 2, 3, 1])
 
     """
     p = asarray(p)
@@ -1931,8 +1600,8 @@ def residue(b, a, tol=1e-3, rtype='avg'):
                 term2 = polymul(bn, polyder(an, 1))
                 bn = polysub(term1, term2)
                 an = polymul(an, an)
-            r[indx + m - 1] = (polyval(bn, pout[n]) / polyval(an, pout[n]) /
-                               factorial(sig - m))
+            r[indx + m - 1] = (polyval(bn, pout[n]) / polyval(an, pout[n])
+                               / factorial(sig - m))
         indx += sig
     return r / rscale, p, k
 
@@ -1980,7 +1649,7 @@ def residuez(b, a, tol=1e-3, rtype='avg'):
     k : ndarray
         Coefficients of the direct polynomial term.
 
-    See Also
+    See also
     --------
     invresz, residue, unique_roots
 
@@ -2146,7 +1815,7 @@ def resample(x, num, t=None, axis=0, window=None):
         containing the resampled array and the corresponding resampled
         positions.
 
-    See Also
+    See also
     --------
     decimate : Downsample the signal after applying an FIR or IIR filter.
     resample_poly : Resample using polyphase filtering and an FIR filter.
@@ -2213,7 +1882,6 @@ def resample(x, num, t=None, axis=0, window=None):
         newshape[axis] = len(W)
         W.shape = newshape
         X = X * W
-        W.shape = (Nx,)
     sl = [slice(None)] * x.ndim
     newshape = list(x.shape)
     newshape[axis] = num
@@ -2223,18 +1891,6 @@ def resample(x, num, t=None, axis=0, window=None):
     Y[sl] = X[sl]
     sl[axis] = slice(-(N - 1) // 2, None)
     Y[sl] = X[sl]
-
-    if N % 2 == 0:  # special treatment if low number of points is even. So far we have set Y[-N/2]=X[-N/2]
-        if N < Nx:  # if downsampling
-            sl[axis] = slice(N//2,N//2+1,None)  # select the component at frequency N/2
-            Y[sl] += X[sl]  # add the component of X at N/2
-        elif N < num:  # if upsampling
-            sl[axis] = slice(num-N//2,num-N//2+1,None)  # select the component at frequency -N/2
-            Y[sl] /= 2  # halve the component at -N/2
-            temp = Y[sl]
-            sl[axis] = slice(N//2,N//2+1,None)  # select the component at +N/2
-            Y[sl] = temp  # set that equal to the component at -N/2
-
     y = fftpack.ifft(Y, axis=axis) * (float(num) / float(Nx))
 
     if x.dtype.char not in ['F', 'D']:
@@ -2276,7 +1932,7 @@ def resample_poly(x, up, down, axis=0, window=('kaiser', 5.0)):
     resampled_x : array
         The resampled array.
 
-    See Also
+    See also
     --------
     decimate : Downsample the signal after applying an FIR or IIR filter.
     resample : Resample up or down using the FFT method.
@@ -2307,7 +1963,7 @@ def resample_poly(x, up, down, axis=0, window=('kaiser', 5.0)):
 
     The first sample of the returned vector is the same as the first
     sample of the input vector. The spacing between samples is changed
-    from ``dx`` to ``dx * down / float(up)``.
+    from ``dx`` to ``dx * up / float(down)``.
 
     Examples
     --------
@@ -2331,10 +1987,6 @@ def resample_poly(x, up, down, axis=0, window=('kaiser', 5.0)):
     >>> plt.show()
     """
     x = asarray(x)
-    if up != int(up):
-        raise ValueError("up must be an integer")
-    if down != int(down):
-        raise ValueError("down must be an integer")
     up = int(up)
     down = int(down)
     if up < 1 or down < 1:
@@ -2352,7 +2004,7 @@ def resample_poly(x, up, down, axis=0, window=('kaiser', 5.0)):
     n_out = n_out // down + bool(n_out % down)
 
     if isinstance(window, (list, np.ndarray)):
-        window = array(window)  # use array to force a copy (we modify it)
+        window = asarray(window)
         if window.ndim > 1:
             raise ValueError('window must be 1-D')
         half_len = (window.size - 1) // 2
@@ -2374,13 +2026,15 @@ def resample_poly(x, up, down, axis=0, window=('kaiser', 5.0)):
                       up, down) < n_out + n_pre_remove:
         n_post_pad += 1
     h = np.concatenate((np.zeros(n_pre_pad), h, np.zeros(n_post_pad)))
+    ufd = _UpFIRDn(h, x.dtype, up, down)
     n_pre_remove_end = n_pre_remove + n_out
 
-    # filter then remove excess
-    y = upfirdn(h, x, up, down, axis=axis)
-    keep = [slice(None), ]*x.ndim
-    keep[axis] = slice(n_pre_remove, n_pre_remove_end)
-    return y[keep]
+    def apply_remove(x):
+        """Apply the upfirdn filter and remove excess"""
+        return ufd.apply_filter(x)[n_pre_remove:n_pre_remove_end]
+
+    y = np.apply_along_axis(apply_remove, axis, x)
+    return y
 
 
 def vectorstrength(events, period):
@@ -2421,14 +2075,14 @@ def vectorstrength(events, period):
     van Hemmen, JL, Longtin, A, and Vollmayr, AN. Testing resonating vector
         strength: Auditory system, electric fish, and noise.
         Chaos 21, 047508 (2011);
-        :doi:`10.1063/1.3670512`.
+        doi: 10.1063/1.3670512
     van Hemmen, JL.  Vector strength after Goldberg, Brown, and von Mises:
         biological and mathematical perspectives.  Biol Cybern.
-        2013 Aug;107(4):385-96. :doi:`10.1007/s00422-013-0561-7`.
+        2013 Aug;107(4):385-96. doi: 10.1007/s00422-013-0561-7.
     van Hemmen, JL and Vollmayr, AN.  Resonating vector strength: what happens
         when we vary the "probing" frequency while keeping the spike times
         fixed.  Biol Cybern. 2013 Aug;107(4):491-94.
-        :doi:`10.1007/s00422-013-0560-8`.
+        doi: 10.1007/s00422-013-0560-8
     '''
     events = asarray(events)
     period = asarray(period)
@@ -2522,7 +2176,7 @@ def detrend(data, axis=-1, type='linear', bp=0):
             axis = axis + rnk
         newdims = r_[axis, 0:axis, axis + 1:rnk]
         newdata = reshape(transpose(data, tuple(newdims)),
-                          (N, _prod(dshape) // N))
+                          (N, prod(dshape, axis=0) // N))
         newdata = newdata.copy()  # make sure we have a copy
         if newdata.dtype.char not in 'dfDF':
             newdata = newdata.astype(dtype)
@@ -2545,9 +2199,7 @@ def detrend(data, axis=-1, type='linear', bp=0):
 
 def lfilter_zi(b, a):
     """
-    Construct initial conditions for lfilter for step response steady-state.
-
-    Compute an initial state `zi` for the `lfilter` function that corresponds
+    Compute an initial state `zi` for the lfilter function that corresponds
     to the steady state of the step response.
 
     A typical use of this function is to set the initial state so that the
@@ -2681,9 +2333,7 @@ def lfilter_zi(b, a):
 
 def sosfilt_zi(sos):
     """
-    Construct initial conditions for sosfilt for step response steady-state.
-
-    Compute an initial state `zi` for the `sosfilt` function that corresponds
+    Compute an initial state `zi` for the sosfilt function that corresponds
     to the steady state of the step response.
 
     A typical use of this function is to set the initial state so that the
@@ -2933,13 +2583,25 @@ def _filtfilt_gust(b, a, x, axis=-1, irlen=None):
 def filtfilt(b, a, x, axis=-1, padtype='odd', padlen=None, method='pad',
              irlen=None):
     """
-    Apply a digital filter forward and backward to a signal.
+    A forward-backward filter.
 
-    This function applies a linear digital filter twice, once forward and
-    once backwards.  The combined filter has zero phase and a filter order
-    twice that of the original.
+    This function applies a linear filter twice, once forward and once
+    backwards.  The combined filter has linear phase.
 
     The function provides options for handling the edges of the signal.
+
+    When `method` is "pad", the function pads the data along the given axis
+    in one of three ways: odd, even or constant.  The odd and even extensions
+    have the corresponding symmetry about the end point of the data.  The
+    constant extension extends the data with the values at the end points. On
+    both the forward and backward passes, the initial condition of the
+    filter is found by using `lfilter_zi` and scaling it by the end point of
+    the extended data.
+
+    When `method` is "gust", Gustafsson's method [1]_ is used.  Initial
+    conditions are chosen for the forward and backward passes so that the
+    forward-backward filter gives the same result as the backward-forward
+    filter.
 
     Parameters
     ----------
@@ -2986,19 +2648,6 @@ def filtfilt(b, a, x, axis=-1, padtype='odd', padlen=None, method='pad',
 
     Notes
     -----
-    When `method` is "pad", the function pads the data along the given axis
-    in one of three ways: odd, even or constant.  The odd and even extensions
-    have the corresponding symmetry about the end point of the data.  The
-    constant extension extends the data with the values at the end points. On
-    both the forward and backward passes, the initial condition of the
-    filter is found by using `lfilter_zi` and scaling it by the end point of
-    the extended data.
-
-    When `method` is "gust", Gustafsson's method [1]_ is used.  Initial
-    conditions are chosen for the forward and backward passes so that the
-    forward-backward filter gives the same result as the backward-forward
-    filter.
-
     The option to use Gustaffson's method was added in scipy version 0.16.0.
 
     References
@@ -3023,7 +2672,7 @@ def filtfilt(b, a, x, axis=-1, padtype='odd', padlen=None, method='pad',
     >>> x = xlow + xhigh
 
     Now create a lowpass Butterworth filter with a cutoff of 0.125 times
-    the Nyquist frequency, or 125 Hz, and apply it to ``x`` with `filtfilt`.
+    the Nyquist rate, or 125 Hz, and apply it to ``x`` with `filtfilt`.
     The result should be approximately ``xlow``, with no phase shift.
 
     >>> b, a = signal.butter(8, 0.125)
@@ -3164,7 +2813,7 @@ def _validate_pad(padtype, padlen, x, axis, ntaps):
 
 def sosfilt(sos, x, axis=-1, zi=None):
     """
-    Filter data along one dimension using cascaded second-order sections.
+    Filter data along one dimension using cascaded second-order sections
 
     Filter a data sequence, `x`, using a digital IIR filter defined by
     `sos`. This is implemented by performing `lfilter` for each
@@ -3203,7 +2852,7 @@ def sosfilt(sos, x, axis=-1, zi=None):
 
     See Also
     --------
-    zpk2sos, sos2zpk, sosfilt_zi, sosfiltfilt, sosfreqz
+    zpk2sos, sos2zpk, sosfilt_zi, sosfiltfilt
 
     Notes
     -----
@@ -3224,7 +2873,8 @@ def sosfilt(sos, x, axis=-1, zi=None):
     >>> from scipy import signal
     >>> b, a = signal.ellip(13, 0.009, 80, 0.05, output='ba')
     >>> sos = signal.ellip(13, 0.009, 80, 0.05, output='sos')
-    >>> x = signal.unit_impulse(700)
+    >>> x = np.zeros(700)
+    >>> x[0] = 1.
     >>> y_tf = signal.lfilter(b, a, x)
     >>> y_sos = signal.sosfilt(sos, x)
     >>> plt.plot(y_tf, 'r', label='TF')
@@ -3260,7 +2910,7 @@ def sosfilt(sos, x, axis=-1, zi=None):
 
 def sosfiltfilt(sos, x, axis=-1, padtype='odd', padlen=None):
     """
-    A forward-backward digital filter using cascaded second-order sections.
+    A forward-backward filter using cascaded second-order sections.
 
     See `filtfilt` for more complete information about this method.
 
@@ -3303,48 +2953,11 @@ def sosfiltfilt(sos, x, axis=-1, padtype='odd', padlen=None):
 
     See Also
     --------
-    filtfilt, sosfilt, sosfilt_zi, sosfreqz
+    filtfilt, sosfilt, sosfilt_zi
 
     Notes
     -----
     .. versionadded:: 0.18.0
-
-    Examples
-    --------
-    >>> from scipy.signal import sosfiltfilt, butter
-    >>> import matplotlib.pyplot as plt
-
-    Create an interesting signal to filter.
-
-    >>> n = 201
-    >>> t = np.linspace(0, 1, n)
-    >>> np.random.seed(123)
-    >>> x = 1 + (t < 0.5) - 0.25*t**2 + 0.05*np.random.randn(n)
-
-    Create a lowpass Butterworth filter, and use it to filter `x`.
-
-    >>> sos = butter(4, 0.125, output='sos')
-    >>> y = sosfiltfilt(sos, x)
-
-    For comparison, apply an 8th order filter using `sosfilt`.  The filter
-    is initialized using the mean of the first four values of `x`.
-
-    >>> from scipy.signal import sosfilt, sosfilt_zi
-    >>> sos8 = butter(8, 0.125, output='sos')
-    >>> zi = x[:4].mean() * sosfilt_zi(sos8)
-    >>> y2, zo = sosfilt(sos8, x, zi=zi)
-
-    Plot the results.  Note that the phase of `y` matches the input, while
-    `y2` has a significant phase delay.
-
-    >>> plt.plot(t, x, alpha=0.5, label='x(t)')
-    >>> plt.plot(t, y, label='y(t)')
-    >>> plt.plot(t, y2, label='y2(t)')
-    >>> plt.legend(framealpha=1, shadow=True)
-    >>> plt.grid(alpha=0.25)
-    >>> plt.xlabel('t')
-    >>> plt.show()
-
     """
     sos, n_sections = _validate_sos(sos)
 
@@ -3369,7 +2982,20 @@ def sosfiltfilt(sos, x, axis=-1, padtype='odd', padlen=None):
     return y
 
 
-def decimate(x, q, n=None, ftype='iir', axis=-1, zero_phase=True):
+def _validate_sos(sos):
+    """Helper to validate a SOS input"""
+    sos = atleast_2d(sos)
+    if sos.ndim != 2:
+        raise ValueError('sos array must be 2D')
+    n_sections, m = sos.shape
+    if m != 6:
+        raise ValueError('sos array must be shape (n_sections, 6)')
+    if not (sos[:, 3] == 1).all():
+        raise ValueError('sos[:, 3] should be all ones')
+    return sos, n_sections
+
+
+def decimate(x, q, n=None, ftype='iir', axis=-1, zero_phase=None):
     """
     Downsample the signal after applying an anti-aliasing filter.
 
@@ -3378,15 +3004,14 @@ def decimate(x, q, n=None, ftype='iir', axis=-1, zero_phase=True):
 
     Parameters
     ----------
-    x : array_like
+    x : ndarray
         The signal to be downsampled, as an N-dimensional array.
     q : int
-        The downsampling factor. When using IIR downsampling, it is recommended
-        to call `decimate` multiple times for downsampling factors higher than
-        13.
+        The downsampling factor. For downsampling factors higher than 13, it is
+        recommended to call `decimate` multiple times.
     n : int, optional
         The order of the filter (1 less than the length for 'fir'). Defaults to
-        8 for 'iir' and 20 times the downsampling factor for 'fir'.
+        8 for 'iir' and 30 for 'fir'.
     ftype : str {'iir', 'fir'} or ``dlti`` instance, optional
         If 'iir' or 'fir', specifies the type of lowpass filter. If an instance
         of an `dlti` object, uses that object to filter before downsampling.
@@ -3395,8 +3020,11 @@ def decimate(x, q, n=None, ftype='iir', axis=-1, zero_phase=True):
     zero_phase : bool, optional
         Prevent phase shift by filtering with `filtfilt` instead of `lfilter`
         when using an IIR filter, and shifting the outputs back by the filter's
-        group delay when using an FIR filter. The default value of ``True`` is
-        recommended, since a phase shift is generally not desired.
+        group delay when using an FIR filter. A value of ``True`` is
+        recommended, since a phase shift is generally not desired. Using
+        ``None`` defaults to ``False`` for backwards compatibility. This
+        default will change to ``True`` in a future release, so it is best to
+        set this argument explicitly.
 
         .. versionadded:: 0.18.0
 
@@ -3417,47 +3045,51 @@ def decimate(x, q, n=None, ftype='iir', axis=-1, zero_phase=True):
     0.18.0.
     """
 
-    x = asarray(x)
-    q = operator.index(q)
+    if not isinstance(q, int):
+        raise TypeError("q must be an integer")
 
-    if n is not None:
-        n = operator.index(n)
+    if n is not None and not isinstance(n, int):
+        raise TypeError("n must be an integer")
 
     if ftype == 'fir':
         if n is None:
-            half_len = 10 * q  # reasonable cutoff for our sinc-like function
-            n = 2 * half_len
-        b, a = firwin(n+1, 1. / q, window='hamming'), 1.
+            n = 30
+        system = dlti(firwin(n+1, 1. / q, window='hamming'), 1.)
     elif ftype == 'iir':
         if n is None:
             n = 8
         system = dlti(*cheby1(n, 0.05, 0.8 / q))
-        b, a = system.num, system.den
     elif isinstance(ftype, dlti):
         system = ftype._as_tf()  # Avoids copying if already in TF form
-        b, a = system.num, system.den
+        n = np.max((system.num.size, system.den.size)) - 1
     else:
         raise ValueError('invalid ftype')
 
-    sl = [slice(None)] * x.ndim
-    a = np.asarray(a)
+    if zero_phase is None:
+        warnings.warn(" Note: Decimate's zero_phase keyword argument will "
+                      "default to True in a future release. Until then, "
+                      "decimate defaults to one-way filtering for backwards "
+                      "compatibility. Ideally, always set this argument "
+                      "explicitly.", FutureWarning)
+        zero_phase = False
 
-    if a.size == 1:  # FIR case
-        b = b / a
+    sl = [slice(None)] * x.ndim
+
+    if len(system.den) == 1:  # FIR case
         if zero_phase:
-            y = resample_poly(x, 1, q, axis=axis, window=b)
+            y = resample_poly(x, 1, q, axis=axis, window=system.num)
         else:
             # upfirdn is generally faster than lfilter by a factor equal to the
             # downsampling factor, since it only calculates the needed outputs
             n_out = x.shape[axis] // q + bool(x.shape[axis] % q)
-            y = upfirdn(b, x, up=1, down=q, axis=axis)
+            y = upfirdn(system.num, x, up=1, down=q, axis=axis)
             sl[axis] = slice(None, n_out, None)
 
     else:  # IIR case
         if zero_phase:
-            y = filtfilt(b, a, x, axis=axis)
+            y = filtfilt(system.num, system.den, x, axis=axis)
         else:
-            y = lfilter(b, a, x, axis=axis)
+            y = lfilter(system.num, system.den, x, axis=axis)
         sl[axis] = slice(None, None, q)
 
     return y[sl]

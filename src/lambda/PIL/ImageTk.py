@@ -25,14 +25,14 @@
 # See the README file for information on usage and redistribution.
 #
 
-import sys
-
-if sys.version_info.major > 2:
+try:
     import tkinter
-else:
-    import Tkinter as tkinter
+except ImportError:
+    import Tkinter
+    tkinter = Tkinter
+    del Tkinter
 
-from . import Image
+from PIL import Image
 from io import BytesIO
 
 
@@ -162,8 +162,8 @@ class PhotoImage(object):
                    mode does not match, the image is converted to the mode of
                    the bitmap image.
         :param box: A 4-tuple defining the left, upper, right, and lower pixel
-                    coordinate. See :ref:`coordinate-system`. If None is given
-                    instead of a tuple, all of the image is assumed.
+                    coordinate.  If None is given instead of a tuple, all of
+                    the image is assumed.
         """
 
         # convert to blittable
@@ -182,20 +182,9 @@ class PhotoImage(object):
         except tkinter.TclError:
             # activate Tkinter hook
             try:
-                from . import _imagingtk
+                from PIL import _imagingtk
                 try:
-                    if hasattr(tk, 'interp'):
-                        # Required for PyPy, which always has CFFI installed
-                        from cffi import FFI
-                        ffi = FFI()
-
-                        # PyPy is using an FFI CDATA element
-                        # (Pdb) self.tk.interp
-                        #  <cdata 'Tcl_Interp *' 0x3061b50>
-                        _imagingtk.tkinit(
-                            int(ffi.cast("uintptr_t", tk.interp)), 1)
-                    else:
-                        _imagingtk.tkinit(tk.interpaddr(), 1)
+                    _imagingtk.tkinit(tk.interpaddr(), 1)
                 except AttributeError:
                     _imagingtk.tkinit(id(tk), 0)
                 tk.call("PyImagingPhoto", self.__photo, block.id)
@@ -275,8 +264,6 @@ class BitmapImage(object):
 
 
 def getimage(photo):
-    """ This function is unimplemented """
-
     """Copies the contents of a PhotoImage to a PIL image memory."""
     photo.tk.call("PyImagingPhotoGet", photo)
 

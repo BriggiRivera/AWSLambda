@@ -17,12 +17,14 @@
 
 from __future__ import print_function
 
-from . import Image, ImageFile
-from ._binary import i32le as i32, i8
+from PIL import Image, ImageFile, _binary
 
 import olefile
 
 __version__ = "0.1"
+
+i32 = _binary.i32le
+i8 = _binary.i8
 
 # we map from colour field tuples to (mode, rawmode) descriptors
 MODES = {
@@ -81,7 +83,7 @@ class FpxImageFile(ImageFile.ImageFile):
 
         # size (highest resolution)
 
-        self._size = prop[0x1000002], prop[0x1000003]
+        self.size = prop[0x1000002], prop[0x1000003]
 
         size = max(self.size)
         i = 1
@@ -114,6 +116,8 @@ class FpxImageFile(ImageFile.ImageFile):
             if id in prop:
                 self.jpeg[i] = prop[id]
 
+        # print(len(self.jpeg), "tables loaded")
+
         self._open_subimage(1, self.maxid)
 
     def _open_subimage(self, index=1, subimage=0):
@@ -140,6 +144,8 @@ class FpxImageFile(ImageFile.ImageFile):
         # channels = i32(s, 24)
         offset = i32(s, 28)
         length = i32(s, 32)
+
+        # print(size, self.mode, self.rawmode)
 
         if size != self.size:
             raise IOError("subimage mismatch")
@@ -218,7 +224,6 @@ class FpxImageFile(ImageFile.ImageFile):
 
 #
 # --------------------------------------------------------------------
-
 
 Image.register_open(FpxImageFile.format, FpxImageFile, _accept)
 

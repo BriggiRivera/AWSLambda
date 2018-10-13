@@ -7,8 +7,7 @@
 # Image plugin for Palm pixmap images (output only).
 ##
 
-from . import Image, ImageFile
-from ._binary import o8, o16be as o16b
+from PIL import Image, ImageFile, _binary
 
 __version__ = "1.0"
 
@@ -90,7 +89,6 @@ def build_prototype_image():
     image.putpalette(palettedata)
     return image
 
-
 Palm8BitColormapImage = build_prototype_image()
 
 # OK, we now have in Palm8BitColormapImage,
@@ -110,6 +108,9 @@ _COMPRESSION_TYPES = {
     "scanline": 0x00,
     }
 
+o8 = _binary.o8
+o16b = _binary.o16be
+
 
 #
 # --------------------------------------------------------------------
@@ -117,7 +118,7 @@ _COMPRESSION_TYPES = {
 ##
 # (Internal) Image save plugin for the Palm format.
 
-def _save(im, fp, filename):
+def _save(im, fp, filename, check=0):
 
     if im.mode == "P":
 
@@ -165,6 +166,9 @@ def _save(im, fp, filename):
     else:
 
         raise IOError("cannot write mode %s as Palm" % im.mode)
+
+    if check:
+        return check
 
     #
     # make sure image data is available

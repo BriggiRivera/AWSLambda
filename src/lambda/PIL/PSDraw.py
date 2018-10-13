@@ -15,8 +15,7 @@
 # See the README file for information on usage and redistribution.
 #
 
-from . import EpsImagePlugin
-from ._util import py3
+from PIL import EpsImagePlugin
 import sys
 
 ##
@@ -25,7 +24,7 @@ import sys
 
 class PSDraw(object):
     """
-    Sets up printing to the given file. If **fp** is omitted,
+    Sets up printing to the given file. If **file** is omitted,
     :py:attr:`sys.stdout` is assumed.
     """
 
@@ -35,7 +34,7 @@ class PSDraw(object):
         self.fp = fp
 
     def _fp_write(self, to_write):
-        if not py3 or self.fp == sys.stdout:
+        if bytes is str or self.fp == sys.stdout:
             self.fp.write(to_write)
         else:
             self.fp.write(bytes(to_write, 'UTF-8'))
@@ -153,7 +152,6 @@ class PSDraw(object):
 #
 # Copyright (c) Fredrik Lundh 1994.
 #
-
 
 EDROFF_PS = """\
 /S { show } bind def

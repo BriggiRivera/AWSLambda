@@ -7,7 +7,8 @@
 
 from __future__ import print_function
 
-from . import Image, _imagingmorph
+from PIL import Image
+from PIL import _imagingmorph
 import re
 
 LUT_SIZE = 1 << 9
@@ -123,7 +124,7 @@ class LutBuilder(object):
                            .replace('0', 'Z')
                            .replace('1', '0')
                            .replace('Z', '1'))
-                res = 1-int(res)
+                res = '%d' % (1-int(res))
                 patterns.append((pattern, res))
 
         return patterns
@@ -150,6 +151,11 @@ class LutBuilder(object):
             pattern = pattern.replace(' ', '').replace('\n', '')
 
             patterns += self._pattern_permute(pattern, options, result)
+
+#        # Debugging
+#        for p,r in patterns:
+#            print(p,r)
+#        print('--')
 
         # compile the patterns into regular expressions for speed
         for i, pattern in enumerate(patterns):
@@ -206,7 +212,7 @@ class MorphOp(object):
         an image.
 
         Returns a list of tuples of (x,y) coordinates
-        of all matching pixels. See :ref:`coordinate-system`."""
+        of all matching pixels."""
         if self.lut is None:
             raise Exception('No operator loaded')
 
@@ -218,7 +224,7 @@ class MorphOp(object):
         """Get a list of all turned on pixels in a binary image
 
         Returns a list of tuples of (x,y) coordinates
-        of all matching pixels. See :ref:`coordinate-system`."""
+        of all matching pixels."""
 
         if image.mode != 'L':
             raise Exception('Image must be binary, meaning it must use mode L')
@@ -229,7 +235,7 @@ class MorphOp(object):
         with open(filename, 'rb') as f:
             self.lut = bytearray(f.read())
 
-        if len(self.lut) != LUT_SIZE:
+        if len(self.lut) != 8192:
             self.lut = None
             raise Exception('Wrong size operator file!')
 

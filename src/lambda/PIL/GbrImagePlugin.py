@@ -24,13 +24,13 @@
 # Version 3 files have a format specifier of 18 for 16bit floats in
 #   the color depth field. This is currently unsupported by Pillow.
 
-from . import Image, ImageFile
-from ._binary import i32be as i32
+from PIL import Image, ImageFile, _binary
+
+i32 = _binary.i32be
 
 
 def _accept(prefix):
-    return len(prefix) >= 8 and \
-           i32(prefix[:4]) >= 20 and i32(prefix[4:8]) in (1, 2)
+    return len(prefix) >= 8 and i32(prefix[:4]) >= 20 and i32(prefix[4:8]) in (1, 2)
 
 
 ##
@@ -55,8 +55,7 @@ class GbrImageFile(ImageFile.ImageFile):
         if width <= 0 or height <= 0:
             raise SyntaxError("not a GIMP brush")
         if color_depth not in (1, 4):
-            raise SyntaxError(
-                "Unsupported GIMP brush color depth: %s" % color_depth)
+            raise SyntaxError("Unsupported GIMP brush color depth: %s" % color_depth)
 
         if version == 1:
             comment_length = header_size-20
@@ -74,7 +73,7 @@ class GbrImageFile(ImageFile.ImageFile):
         else:
             self.mode = 'RGBA'
 
-        self._size = width, height
+        self.size = width, height
 
         self.info["comment"] = comment
 
@@ -90,7 +89,6 @@ class GbrImageFile(ImageFile.ImageFile):
 
 #
 # registry
-
 
 Image.register_open(GbrImageFile.format, GbrImageFile, _accept)
 Image.register_extension(GbrImageFile.format, ".gbr")

@@ -130,7 +130,7 @@ class LinearOperator(object):
     def __new__(cls, *args, **kwargs):
         if cls is LinearOperator:
             # Operate as _CustomLinearOperator factory.
-            return super(LinearOperator, cls).__new__(_CustomLinearOperator)
+            return _CustomLinearOperator(*args, **kwargs)
         else:
             obj = super(LinearOperator, cls).__new__(cls)
 
@@ -152,7 +152,7 @@ class LinearOperator(object):
 
         shape = tuple(shape)
         if not isshape(shape):
-            raise ValueError("invalid shape %r (must be 2-d)" % (shape,))
+            raise ValueError("invalid shape %r (must be 2-d)" % shape)
 
         self.dtype = dtype
         self.shape = shape
@@ -473,7 +473,7 @@ class _CustomLinearOperator(LinearOperator):
     def _rmatvec(self, x):
         func = self.__rmatvec_impl
         if func is None:
-            raise NotImplementedError("rmatvec is not defined")
+            raise NotImplemented("rmatvec is not defined")
         return self.__rmatvec_impl(x)
 
     def _adjoint(self):
@@ -573,8 +573,8 @@ class _PowerLinearOperator(LinearOperator):
             raise ValueError('LinearOperator expected as A')
         if A.shape[0] != A.shape[1]:
             raise ValueError('square LinearOperator expected, got %r' % A)
-        if not isintlike(p) or p < 0:
-            raise ValueError('non-negative integer expected as p')
+        if not isintlike(p):
+            raise ValueError('integer expected as p')
 
         super(_PowerLinearOperator, self).__init__(_get_dtype([A]), A.shape)
         self.args = (A, p)
@@ -659,18 +659,13 @@ def aslinearoperator(A):
 
     See the LinearOperator documentation for additional information.
 
-    Notes
-    -----
-    If 'A' has no .dtype attribute, the data type is determined by calling
-    :func:`LinearOperator.matvec()` - set the .dtype attribute to prevent this
-    call upon the linear operator creation.
-
     Examples
     --------
     >>> from scipy.sparse.linalg import aslinearoperator
     >>> M = np.array([[1,2,3],[4,5,6]], dtype=np.int32)
     >>> aslinearoperator(M)
     <2x3 MatrixLinearOperator with dtype=int32>
+
     """
     if isinstance(A, LinearOperator):
         return A

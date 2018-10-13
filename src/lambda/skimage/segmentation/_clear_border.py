@@ -5,10 +5,12 @@ from ..measure import label
 def clear_border(labels, buffer_size=0, bgval=0, in_place=False):
     """Clear objects connected to the label image border.
 
+    The changes will be applied directly to the input.
+
     Parameters
     ----------
-    labels : (M[, N[, ..., P]]) array of int or bool
-        Imaging data labels.
+    labels : (N, M) array of int
+        Label or binary image.
     buffer_size : int, optional
         The width of the border examined.  By default, only objects
         that touch the outside of the image are removed.
@@ -19,8 +21,8 @@ def clear_border(labels, buffer_size=0, bgval=0, in_place=False):
 
     Returns
     -------
-    out : (M[, N[, ..., P]]) array
-        Imaging data labels with cleared borders
+    labels : (N, M) array
+        Cleared binary image.
 
     Examples
     --------
@@ -43,21 +45,17 @@ def clear_border(labels, buffer_size=0, bgval=0, in_place=False):
     """
     image = labels
 
-    if any( ( buffer_size >= s for s in image.shape)):
+    rows, cols = image.shape
+    if buffer_size >= rows or buffer_size >= cols:
         raise ValueError("buffer size may not be greater than image size")
 
     # create borders with buffer_size
     borders = np.zeros_like(image, dtype=np.bool_)
     ext = buffer_size + 1
-    slstart = slice(ext)
-    slend   = slice(-ext, None)
-    slices  = [slice(s) for s in image.shape]
-    for d in range(image.ndim):
-        slicedim = list(slices)
-        slicedim[d] = slstart
-        borders[tuple(slicedim)] = True
-        slicedim[d] = slend
-        borders[tuple(slicedim)] = True
+    borders[:ext] = True
+    borders[- ext:] = True
+    borders[:, :ext] = True
+    borders[:, - ext:] = True
 
     # Re-label, in case we are dealing with a binary image
     # and to get consistent labeling

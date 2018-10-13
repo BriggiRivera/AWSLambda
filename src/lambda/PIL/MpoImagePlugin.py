@@ -18,7 +18,7 @@
 # See the README file for information on usage and redistribution.
 #
 
-from . import Image, JpegImagePlugin
+from PIL import Image, JpegImagePlugin
 
 __version__ = "0.1"
 
@@ -39,7 +39,6 @@ class MpoImageFile(JpegImagePlugin.JpegImageFile):
 
     format = "MPO"
     format_description = "MPO (CIPA DC-007)"
-    _close_exclusive_fp_after_loading = False
 
     def _open(self):
         self.fp.seek(0)  # prep the fp in order to pass the JPEG test
@@ -72,20 +71,21 @@ class MpoImageFile(JpegImagePlugin.JpegImageFile):
         return self.__framecount > 1
 
     def seek(self, frame):
-        if not self._seek_check(frame):
-            return
-        self.fp = self.__fp
-        self.offset = self.__mpoffsets[frame]
-        self.tile = [
-            ("jpeg", (0, 0) + self.size, self.offset, (self.mode, ""))
-        ]
+        if frame < 0 or frame >= self.__framecount:
+            raise EOFError("no more images in MPO file")
+        else:
+            self.fp = self.__fp
+            self.offset = self.__mpoffsets[frame]
+            self.tile = [
+                ("jpeg", (0, 0) + self.size, self.offset, (self.mode, ""))
+            ]
         self.__frame = frame
 
     def tell(self):
         return self.__frame
 
 
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------q-
 # Registry stuff
 
 # Note that since MPO shares a factory with JPEG, we do not need to do a

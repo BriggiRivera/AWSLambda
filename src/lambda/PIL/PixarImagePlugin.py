@@ -19,14 +19,15 @@
 # See the README file for information on usage and redistribution.
 #
 
-from . import Image, ImageFile
-from ._binary import i16le as i16
+from PIL import Image, ImageFile, _binary
 
 __version__ = "0.1"
 
-
 #
 # helpers
+
+i16 = _binary.i16le
+
 
 def _accept(prefix):
     return prefix[:4] == b"\200\350\000\000"
@@ -50,7 +51,7 @@ class PixarImageFile(ImageFile.ImageFile):
         # read rest of header
         s = s + self.fp.read(508)
 
-        self._size = i16(s[418:420]), i16(s[416:418])
+        self.size = i16(s[418:420]), i16(s[416:418])
 
         # get channel/depth descriptions
         mode = i16(s[424:426]), i16(s[426:428])
@@ -61,7 +62,6 @@ class PixarImageFile(ImageFile.ImageFile):
 
         # create tile descriptor (assuming "dumped")
         self.tile = [("raw", (0, 0)+self.size, 1024, (self.mode, 0, 1))]
-
 
 #
 # --------------------------------------------------------------------

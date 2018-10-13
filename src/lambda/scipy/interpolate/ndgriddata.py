@@ -21,7 +21,7 @@ __all__ = ['griddata', 'NearestNDInterpolator', 'LinearNDInterpolator',
 
 class NearestNDInterpolator(NDInterpolatorBase):
     """
-    NearestNDInterpolator(x, y)
+    NearestNDInterpolator(points, values)
 
     Nearest-neighbour interpolation in N dimensions.
 
@@ -97,7 +97,7 @@ def griddata(points, values, xi, method='linear', fill_value=np.nan,
         shape (n, D), or a tuple of `ndim` arrays.
     values : ndarray of float or complex, shape (n,)
         Data values.
-    xi : 2-D ndarray of float or tuple of 1-D array, shape (M, D)
+    xi : ndarray of float, shape (M, D)
         Points at which to interpolate data.
     method : {'linear', 'nearest', 'cubic'}, optional
         Method of interpolation. One of
@@ -108,7 +108,7 @@ def griddata(points, values, xi, method='linear', fill_value=np.nan,
           more details.
 
         ``linear``
-          tessellate the input point set to n-dimensional
+          tesselate the input point set to n-dimensional
           simplices, and interpolate linearly on each simplex.  See
           `LinearNDInterpolator` for more details.
 
@@ -132,11 +132,6 @@ def griddata(points, values, xi, method='linear', fill_value=np.nan,
         incommensurable units and differ by many orders of magnitude.
 
         .. versionadded:: 0.14.0
-        
-    Returns
-    -------
-    ndarray
-        Array of interpolated values.
 
     Notes
     -----

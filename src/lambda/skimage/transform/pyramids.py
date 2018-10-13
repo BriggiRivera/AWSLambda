@@ -3,19 +3,23 @@ import numpy as np
 from scipy import ndimage as ndi
 from ..transform import resize
 from ..util import img_as_float
-from ._warps import _multichannel_default
 
 
-def _smooth(image, sigma, mode, cval, multichannel=None):
+def _smooth(image, sigma, mode, cval):
     """Return image with each channel smoothed by the Gaussian filter."""
-    multichannel = _multichannel_default(multichannel, image.ndim)
+
     smoothed = np.empty(image.shape, dtype=np.double)
 
-    # apply Gaussian filter to all channels independently
-    if multichannel:
-        sigma = (sigma, )*(image.ndim - 1) + (0, )
-    ndi.gaussian_filter(image, sigma, output=smoothed,
-                        mode=mode, cval=cval)
+    # apply Gaussian filter to all dimensions independently
+    if image.ndim == 3:
+        for dim in range(image.shape[2]):
+            ndi.gaussian_filter(image[..., dim], sigma,
+                                output=smoothed[..., dim],
+                                mode=mode, cval=cval)
+    else:
+        ndi.gaussian_filter(image, sigma, output=smoothed,
+                            mode=mode, cval=cval)
+
     return smoothed
 
 
@@ -25,12 +29,12 @@ def _check_factor(factor):
 
 
 def pyramid_reduce(image, downscale=2, sigma=None, order=1,
-                   mode='reflect', cval=0, multichannel=None):
+                   mode='reflect', cval=0):
     """Smooth and then downsample image.
 
     Parameters
     ----------
-    image : ndarray
+    image : array
         Input image.
     downscale : float, optional
         Downscale factor.
@@ -46,11 +50,6 @@ def pyramid_reduce(image, downscale=2, sigma=None, order=1,
         cval is the value when mode is equal to 'constant'.
     cval : float, optional
         Value to fill past edges of input if mode is 'constant'.
-    multichannel : bool, optional
-        Whether the last axis of the image is to be interpreted as multiple
-        channels or another spatial dimension. By default, is set to True for
-        3D (2D+color) inputs, and False for others. Starting in release 0.16,
-        this will always default to False.
 
     Returns
     -------
@@ -62,33 +61,34 @@ def pyramid_reduce(image, downscale=2, sigma=None, order=1,
     .. [1] http://web.mit.edu/persci/people/adelson/pub_pdfs/pyramid83.pdf
 
     """
-    multichannel = _multichannel_default(multichannel, image.ndim)
+
     _check_factor(downscale)
 
     image = img_as_float(image)
 
-    out_shape = tuple([math.ceil(d / float(downscale)) for d in image.shape])
-    if multichannel:
-        out_shape = out_shape[:-1]
+    rows = image.shape[0]
+    cols = image.shape[1]
+    out_rows = math.ceil(rows / float(downscale))
+    out_cols = math.ceil(cols / float(downscale))
 
     if sigma is None:
         # automatically determine sigma which covers > 99% of distribution
         sigma = 2 * downscale / 6.0
 
-    smoothed = _smooth(image, sigma, mode, cval, multichannel)
-    out = resize(smoothed, out_shape, order=order, mode=mode, cval=cval,
-                 anti_aliasing=False)
+    smoothed = _smooth(image, sigma, mode, cval)
+    out = resize(smoothed, (out_rows, out_cols), order=order,
+                 mode=mode, cval=cval)
 
     return out
 
 
 def pyramid_expand(image, upscale=2, sigma=None, order=1,
-                   mode='reflect', cval=0, multichannel=None):
+                   mode='reflect', cval=0):
     """Upsample and then smooth image.
 
     Parameters
     ----------
-    image : ndarray
+    image : array
         Input image.
     upscale : float, optional
         Upscale factor.
@@ -104,12 +104,6 @@ def pyramid_expand(image, upscale=2, sigma=None, order=1,
         cval is the value when mode is equal to 'constant'.
     cval : float, optional
         Value to fill past edges of input if mode is 'constant'.
-    multichannel : bool, optional
-        Whether the last axis of the image is to be interpreted as multiple
-        channels or another spatial dimension. By default, is set to True for
-        3D (2D+color) inputs, and False for others. Starting in release 0.16,
-        this will always default to False.
-
 
     Returns
     -------
@@ -121,28 +115,29 @@ def pyramid_expand(image, upscale=2, sigma=None, order=1,
     .. [1] http://web.mit.edu/persci/people/adelson/pub_pdfs/pyramid83.pdf
 
     """
-    multichannel = _multichannel_default(multichannel, image.ndim)
+
     _check_factor(upscale)
 
     image = img_as_float(image)
 
-    out_shape = tuple([math.ceil(upscale * d) for d in image.shape])
-    if multichannel:
-        out_shape = out_shape[:-1]
+    rows = image.shape[0]
+    cols = image.shape[1]
+    out_rows = math.ceil(upscale * rows)
+    out_cols = math.ceil(upscale * cols)
 
     if sigma is None:
         # automatically determine sigma which covers > 99% of distribution
         sigma = 2 * upscale / 6.0
 
-    resized = resize(image, out_shape, order=order,
-                     mode=mode, cval=cval, anti_aliasing=False)
-    out = _smooth(resized, sigma, mode, cval, multichannel)
+    resized = resize(image, (out_rows, out_cols), order=order,
+                     mode=mode, cval=cval)
+    out = _smooth(resized, sigma, mode, cval)
 
     return out
 
 
 def pyramid_gaussian(image, max_layer=-1, downscale=2, sigma=None, order=1,
-                     mode='reflect', cval=0, multichannel=None):
+                     mode='reflect', cval=0):
     """Yield images of the Gaussian pyramid formed by the input image.
 
     Recursively applies the `pyramid_reduce` function to the image, and yields
@@ -155,7 +150,7 @@ def pyramid_gaussian(image, max_layer=-1, downscale=2, sigma=None, order=1,
 
     Parameters
     ----------
-    image : ndarray
+    image : array
         Input image.
     max_layer : int
         Number of layers for the pyramid. 0th layer is the original image.
@@ -174,12 +169,6 @@ def pyramid_gaussian(image, max_layer=-1, downscale=2, sigma=None, order=1,
         cval is the value when mode is equal to 'constant'.
     cval : float, optional
         Value to fill past edges of input if mode is 'constant'.
-    multichannel : bool, optional
-        Whether the last axis of the image is to be interpreted as multiple
-        channels or another spatial dimension. By default, is set to True for
-        3D (2D+color) inputs, and False for others. Starting in release 0.16,
-        this will always default to False.
-
 
     Returns
     -------
@@ -191,13 +180,15 @@ def pyramid_gaussian(image, max_layer=-1, downscale=2, sigma=None, order=1,
     .. [1] http://web.mit.edu/persci/people/adelson/pub_pdfs/pyramid83.pdf
 
     """
+
     _check_factor(downscale)
 
     # cast to float for consistent data type in pyramid
     image = img_as_float(image)
 
     layer = 0
-    current_shape = image.shape
+    rows = image.shape[0]
+    cols = image.shape[1]
 
     prev_layer_image = image
     yield image
@@ -208,21 +199,23 @@ def pyramid_gaussian(image, max_layer=-1, downscale=2, sigma=None, order=1,
         layer += 1
 
         layer_image = pyramid_reduce(prev_layer_image, downscale, sigma, order,
-                                     mode, cval, multichannel=multichannel)
+                                     mode, cval)
 
-        prev_shape = np.asarray(current_shape)
+        prev_rows = rows
+        prev_cols = cols
         prev_layer_image = layer_image
-        current_shape = np.asarray(layer_image.shape)
+        rows = layer_image.shape[0]
+        cols = layer_image.shape[1]
 
         # no change to previous pyramid layer
-        if np.all(current_shape == prev_shape):
+        if prev_rows == rows and prev_cols == cols:
             break
 
         yield layer_image
 
 
 def pyramid_laplacian(image, max_layer=-1, downscale=2, sigma=None, order=1,
-                      mode='reflect', cval=0, multichannel=None):
+                      mode='reflect', cval=0):
     """Yield images of the laplacian pyramid formed by the input image.
 
     Each layer contains the difference between the downsampled and the
@@ -238,7 +231,7 @@ def pyramid_laplacian(image, max_layer=-1, downscale=2, sigma=None, order=1,
 
     Parameters
     ----------
-    image : ndarray
+    image : array
         Input image.
     max_layer : int
         Number of layers for the pyramid. 0th layer is the original image.
@@ -257,12 +250,6 @@ def pyramid_laplacian(image, max_layer=-1, downscale=2, sigma=None, order=1,
         cval is the value when mode is equal to 'constant'.
     cval : float, optional
         Value to fill past edges of input if mode is 'constant'.
-    multichannel : bool, optional
-        Whether the last axis of the image is to be interpreted as multiple
-        channels or another spatial dimension. By default, is set to True for
-        3D (2D+color) inputs, and False for others. Starting in release 0.16,
-        this will always default to False.
-
 
     Returns
     -------
@@ -272,10 +259,10 @@ def pyramid_laplacian(image, max_layer=-1, downscale=2, sigma=None, order=1,
     References
     ----------
     .. [1] http://web.mit.edu/persci/people/adelson/pub_pdfs/pyramid83.pdf
-    .. [2] http://sepwww.stanford.edu/data/media/public/sep/morgan/texturematch/paper_html/node3.html
+    .. [2] http://sepwww.stanford.edu/~morgan/texturematch/paper_html/node3.html
 
     """
-    multichannel = _multichannel_default(multichannel, image.ndim)
+
     _check_factor(downscale)
 
     # cast to float for consistent data type in pyramid
@@ -285,28 +272,32 @@ def pyramid_laplacian(image, max_layer=-1, downscale=2, sigma=None, order=1,
         # automatically determine sigma which covers > 99% of distribution
         sigma = 2 * downscale / 6.0
 
-    current_shape = image.shape
+    layer = 0
+    rows = image.shape[0]
+    cols = image.shape[1]
 
-    smoothed_image = _smooth(image, sigma, mode, cval, multichannel)
+    smoothed_image = _smooth(image, sigma, mode, cval)
     yield image - smoothed_image
 
     # build downsampled images until max_layer is reached or downscale process
     # does not change image size
-    if max_layer == -1:
-        max_layer = int(np.ceil(math.log(np.max(current_shape), downscale)))
+    while layer != max_layer:
+        layer += 1
 
-    for layer in range(max_layer):
+        out_rows = math.ceil(rows / float(downscale))
+        out_cols = math.ceil(cols / float(downscale))
 
-        out_shape = tuple(
-            [math.ceil(d / float(downscale)) for d in current_shape])
+        resized_image = resize(smoothed_image, (out_rows, out_cols),
+                               order=order, mode=mode, cval=cval)
+        smoothed_image = _smooth(resized_image, sigma, mode, cval)
 
-        if multichannel:
-            out_shape = out_shape[:-1]
+        prev_rows = rows
+        prev_cols = cols
+        rows = resized_image.shape[0]
+        cols = resized_image.shape[1]
 
-        resized_image = resize(smoothed_image, out_shape, order=order,
-                               mode=mode, cval=cval, anti_aliasing=False)
-        smoothed_image = _smooth(resized_image, sigma, mode, cval,
-                                 multichannel)
-        current_shape = np.asarray(resized_image.shape)
+        # no change to previous pyramid layer
+        if prev_rows == rows and prev_cols == cols:
+            break
 
         yield resized_image - smoothed_image

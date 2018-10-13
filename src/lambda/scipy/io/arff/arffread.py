@@ -1,3 +1,4 @@
+#! /usr/bin/env python
 # Last Change: Mon Aug 20 08:00 PM 2007 J
 from __future__ import division, print_function, absolute_import
 
@@ -30,7 +31,7 @@ __all__ = ['MetaData', 'loadarff', 'ArffError', 'ParseArffError']
 #   - numeric and nominal attributes
 #   - missing values for numeric attributes
 
-r_meta = re.compile(r'^\s*@')
+r_meta = re.compile('^\s*@')
 # Match a comment
 r_comment = re.compile(r'^%')
 # Match an empty line
@@ -398,7 +399,7 @@ def safe_date(value, date_format, datetime_unit):
 
 
 class MetaData(object):
-    """Small container to keep useful information on a ARFF dataset.
+    """Small container to keep useful informations on a ARFF dataset.
 
     Knows about attributes names and types.
 
@@ -409,7 +410,7 @@ class MetaData(object):
         data, meta = loadarff('iris.arff')
         # This will print the attributes names of the iris.arff dataset
         for i in meta:
-            print(i)
+            print i
         # This works too
         meta.names()
         # Getting attribute type
@@ -510,7 +511,7 @@ def loadarff(f):
     Examples
     --------
     >>> from scipy.io import arff
-    >>> from io import StringIO
+    >>> from cStringIO import StringIO
     >>> content = \"\"\"
     ... @relation foo
     ... @attribute width  numeric
@@ -658,7 +659,6 @@ def test_weka(filename):
     print(data.size)
     for i in meta:
         print_attribute(i, meta[i], data[i])
-
 
 # make sure nose does not find this as a test
 test_weka.__test__ = False

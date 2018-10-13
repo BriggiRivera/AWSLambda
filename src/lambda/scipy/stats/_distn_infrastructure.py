@@ -4,7 +4,7 @@
 #
 from __future__ import division, print_function, absolute_import
 
-from scipy._lib.six import string_types, exec_, PY3
+from scipy._lib.six import string_types, exec_
 from scipy._lib._util import getargspec_no_self as _getargspec
 
 import sys
@@ -18,7 +18,7 @@ from ._distr_params import distcont, distdiscrete
 from scipy._lib._util import check_random_state, _lazywhere, _lazyselect
 from scipy._lib._util import _valarray as valarray
 
-from scipy.special import (comb, chndtr, entr, rel_entr, kl_div, xlogy, ive)
+from scipy.special import (comb, chndtr, entr, kl_div, xlogy, ive)
 
 # for root finding for discrete distribution ppf, and max likelihood estimation
 from scipy import optimize
@@ -39,11 +39,12 @@ import numpy as np
 
 from ._constants import _XMAX
 
-if PY3:
+try:
+    from new import instancemethod
+except ImportError:
+    # Python 3
     def instancemethod(func, obj, cls):
         return types.MethodType(func, obj)
-else:
-    instancemethod = types.MethodType
 
 
 # These are the docstring parts used for substitution in specific
@@ -54,91 +55,91 @@ docheaders = {'methods': """\nMethods\n-------\n""",
               'examples': """\nExamples\n--------\n"""}
 
 _doc_rvs = """\
-rvs(%(shapes)s, loc=0, scale=1, size=1, random_state=None)
+``rvs(%(shapes)s, loc=0, scale=1, size=1, random_state=None)``
     Random variates.
 """
 _doc_pdf = """\
-pdf(x, %(shapes)s, loc=0, scale=1)
+``pdf(x, %(shapes)s, loc=0, scale=1)``
     Probability density function.
 """
 _doc_logpdf = """\
-logpdf(x, %(shapes)s, loc=0, scale=1)
+``logpdf(x, %(shapes)s, loc=0, scale=1)``
     Log of the probability density function.
 """
 _doc_pmf = """\
-pmf(k, %(shapes)s, loc=0, scale=1)
+``pmf(x, %(shapes)s, loc=0, scale=1)``
     Probability mass function.
 """
 _doc_logpmf = """\
-logpmf(k, %(shapes)s, loc=0, scale=1)
+``logpmf(x, %(shapes)s, loc=0, scale=1)``
     Log of the probability mass function.
 """
 _doc_cdf = """\
-cdf(x, %(shapes)s, loc=0, scale=1)
+``cdf(x, %(shapes)s, loc=0, scale=1)``
     Cumulative distribution function.
 """
 _doc_logcdf = """\
-logcdf(x, %(shapes)s, loc=0, scale=1)
+``logcdf(x, %(shapes)s, loc=0, scale=1)``
     Log of the cumulative distribution function.
 """
 _doc_sf = """\
-sf(x, %(shapes)s, loc=0, scale=1)
+``sf(x, %(shapes)s, loc=0, scale=1)``
     Survival function  (also defined as ``1 - cdf``, but `sf` is sometimes more accurate).
 """
 _doc_logsf = """\
-logsf(x, %(shapes)s, loc=0, scale=1)
+``logsf(x, %(shapes)s, loc=0, scale=1)``
     Log of the survival function.
 """
 _doc_ppf = """\
-ppf(q, %(shapes)s, loc=0, scale=1)
+``ppf(q, %(shapes)s, loc=0, scale=1)``
     Percent point function (inverse of ``cdf`` --- percentiles).
 """
 _doc_isf = """\
-isf(q, %(shapes)s, loc=0, scale=1)
+``isf(q, %(shapes)s, loc=0, scale=1)``
     Inverse survival function (inverse of ``sf``).
 """
 _doc_moment = """\
-moment(n, %(shapes)s, loc=0, scale=1)
+``moment(n, %(shapes)s, loc=0, scale=1)``
     Non-central moment of order n
 """
 _doc_stats = """\
-stats(%(shapes)s, loc=0, scale=1, moments='mv')
+``stats(%(shapes)s, loc=0, scale=1, moments='mv')``
     Mean('m'), variance('v'), skew('s'), and/or kurtosis('k').
 """
 _doc_entropy = """\
-entropy(%(shapes)s, loc=0, scale=1)
+``entropy(%(shapes)s, loc=0, scale=1)``
     (Differential) entropy of the RV.
 """
 _doc_fit = """\
-fit(data, %(shapes)s, loc=0, scale=1)
+``fit(data, %(shapes)s, loc=0, scale=1)``
     Parameter estimates for generic data.
 """
 _doc_expect = """\
-expect(func, args=(%(shapes_)s), loc=0, scale=1, lb=None, ub=None, conditional=False, **kwds)
+``expect(func, args=(%(shapes_)s), loc=0, scale=1, lb=None, ub=None, conditional=False, **kwds)``
     Expected value of a function (of one argument) with respect to the distribution.
 """
 _doc_expect_discrete = """\
-expect(func, args=(%(shapes_)s), loc=0, lb=None, ub=None, conditional=False)
+``expect(func, args=(%(shapes_)s), loc=0, lb=None, ub=None, conditional=False)``
     Expected value of a function (of one argument) with respect to the distribution.
 """
 _doc_median = """\
-median(%(shapes)s, loc=0, scale=1)
+``median(%(shapes)s, loc=0, scale=1)``
     Median of the distribution.
 """
 _doc_mean = """\
-mean(%(shapes)s, loc=0, scale=1)
+``mean(%(shapes)s, loc=0, scale=1)``
     Mean of the distribution.
 """
 _doc_var = """\
-var(%(shapes)s, loc=0, scale=1)
+``var(%(shapes)s, loc=0, scale=1)``
     Variance of the distribution.
 """
 _doc_std = """\
-std(%(shapes)s, loc=0, scale=1)
+``std(%(shapes)s, loc=0, scale=1)``
     Standard deviation of the distribution.
 """
 _doc_interval = """\
-interval(alpha, %(shapes)s, loc=0, scale=1)
+``interval(alpha, %(shapes)s, loc=0, scale=1)``
     Endpoints of the range that contains alpha percent of the distribution
 """
 _doc_allmethods = ''.join([docheaders['methods'], _doc_rvs, _doc_pdf,
@@ -202,7 +203,7 @@ Generate random numbers:
 
 And compare the histogram:
 
->>> ax.hist(r, density=True, histtype='stepfilled', alpha=0.2)
+>>> ax.hist(r, normed=True, histtype='stepfilled', alpha=0.2)
 >>> ax.legend(loc='best', frameon=False)
 >>> plt.show()
 
@@ -265,11 +266,6 @@ _doc_disc_methods = ['rvs', 'pmf', 'logpmf', 'cdf', 'logcdf', 'sf', 'logsf',
                      'mean', 'var', 'std', 'interval']
 for obj in _doc_disc_methods:
     docdict_discrete[obj] = docdict_discrete[obj].replace(', scale=1', '')
-
-_doc_disc_methods_err_varname = ['cdf', 'logcdf', 'sf', 'logsf']
-for obj in _doc_disc_methods_err_varname:
-    docdict_discrete[obj] = docdict_discrete[obj].replace('(x, ', '(k, ')
-
 docdict_discrete.pop('pdf')
 docdict_discrete.pop('logpdf')
 
@@ -1050,9 +1046,8 @@ class rv_generic(object):
                     if mu2 is None:
                         mu2p = self._munp(2, *goodargs)
                         mu2 = mu2p - mu * mu
-                    with np.errstate(invalid='ignore'):
-                        mu3 = mu3p - 3 * mu * mu2 - mu**3
-                        g1 = mu3 / np.power(mu2, 1.5)
+                    mu3 = mu3p - 3 * mu * mu2 - mu**3
+                    g1 = mu3 / np.power(mu2, 1.5)
                 out0 = default.copy()
                 place(out0, cond, g1)
                 output.append(out0)
@@ -1067,11 +1062,9 @@ class rv_generic(object):
                         mu2 = mu2p - mu * mu
                     if mu3 is None:
                         mu3p = self._munp(3, *goodargs)
-                        with np.errstate(invalid='ignore'):
-                            mu3 = mu3p - 3 * mu * mu2 - mu**3
-                    with np.errstate(invalid='ignore'):
-                        mu4 = mu4p - 4 * mu * mu3 - 6 * mu * mu * mu2 - mu**4
-                        g2 = mu4 / mu2**2.0 - 3.0
+                        mu3 = mu3p - 3 * mu * mu2 - mu**3
+                    mu4 = mu4p - 4 * mu * mu3 - 6 * mu * mu * mu2 - mu**4
+                    g2 = mu4 / mu2**2.0 - 3.0
                 out0 = default.copy()
                 place(out0, cond, g2)
                 output.append(out0)
@@ -1996,7 +1989,7 @@ class rv_continuous(rv_generic):
 
     def _nnlf_and_penalty(self, x, args):
         cond0 = ~self._support_mask(x)
-        n_bad = np.count_nonzero(cond0, axis=0)
+        n_bad = sum(cond0)
         if n_bad > 0:
             x = argsreduce(~cond0, x)[0]
         logpdf = self._logpdf(x, *args)
@@ -2082,8 +2075,7 @@ class rv_continuous(rv_generic):
 
     def fit(self, data, *args, **kwds):
         """
-        Return MLEs for shape (if applicable), location, and scale
-        parameters from data.
+        Return MLEs for shape, location, and scale parameters from data.
 
         MLE stands for Maximum Likelihood Estimate.  Starting estimates for
         the fit are given by input arguments; for any arguments not provided
@@ -2126,10 +2118,9 @@ class rv_continuous(rv_generic):
 
         Returns
         -------
-        mle_tuple : tuple of floats
-            MLEs for any shape parameters (if applicable), followed by those
-            for location and scale. For most random variables, shape statistics
-            will be returned, but there are exceptions (e.g. ``norm``).
+        shape, loc, scale : tuple of floats
+            MLEs for any shape statistics, followed by those for location and
+            scale.
 
         Notes
         -----
@@ -2137,6 +2128,7 @@ class rv_continuous(rv_generic):
         penalty applied for samples outside of range of the distribution. The
         returned answer is not guaranteed to be the globally optimal MLE, it
         may only be locally optimal, or the optimization may fail altogether.
+
 
         Examples
         --------
@@ -2167,14 +2159,6 @@ class rv_continuous(rv_generic):
         >>> a1
         1
 
-        Not all distributions return estimates for the shape parameters.
-        ``norm`` for example just returns estimates for location and scale:
-
-        >>> from scipy.stats import norm
-        >>> x = norm.rvs(a, b, size=1000, random_state=123)
-        >>> loc1, scale1 = norm.fit(x)
-        >>> loc1, scale1
-        (0.92087172783841631, 2.0015750750324668)
         """
         Narg = len(args)
         if Narg > self.numargs:
@@ -2512,7 +2496,7 @@ def entropy(pk, qk=None, base=None):
         if len(qk) != len(pk):
             raise ValueError("qk and pk must have same length.")
         qk = 1.0*qk / np.sum(qk, axis=0)
-        vec = rel_entr(pk, qk)
+        vec = kl_div(pk, qk)
     S = np.sum(vec, axis=0)
     if base is not None:
         S /= log(base)
@@ -2598,10 +2582,7 @@ class rv_discrete(rv_generic):
     Notes
     -----
 
-    This class is similar to `rv_continuous`. Whether a shape parameter is
-    valid is decided by an ``_argcheck`` method (which defaults to checking
-    that its arguments are strictly positive.)
-    The main differences are:
+    This class is similar to `rv_continuous`, the main differences being:
 
     - the support of the distribution is a set of integers
     - instead of the probability density function, ``pdf`` (and the
@@ -2743,6 +2724,12 @@ class rv_discrete(rv_generic):
             self.__doc__ = self.__doc__.replace(
                 '\n    scale : array_like, '
                 'optional\n        scale parameter (default=1)', '')
+
+    @property
+    @np.deprecate(message="`return_integers` attribute is not used anywhere any "
+                          " longer and is deprecated in scipy 0.18.")
+    def return_integers(self):
+        return 1
 
     def _updated_ctor_param(self):
         """ Return the current version of _ctor_param, possibly updated by user.
@@ -3342,6 +3329,12 @@ class rv_sample(rv_discrete):
 
         self._construct_docstrings(name, longname, extradoc)
 
+    @property
+    @np.deprecate(message="`return_integers` attribute is not used anywhere any"
+                          " longer and is deprecated in scipy 0.18.")
+    def return_integers(self):
+        return 0
+
     def _pmf(self, x):
         return np.select([x == k for k in self.xk],
                          [np.broadcast_arrays(p, x)[0] for p in self.pk], 0)
@@ -3373,6 +3366,25 @@ class rv_sample(rv_discrete):
     def generic_moment(self, n):
         n = asarray(n)
         return np.sum(self.xk**n[np.newaxis, ...] * self.pk, axis=0)
+
+    @np.deprecate(message="moment_gen method is not used anywhere any more "
+                          "and is deprecated in scipy 0.18.")
+    def moment_gen(self, t):
+        t = asarray(t)
+        return np.sum(exp(self.xk * t[np.newaxis, ...]) * self.pk, axis=0)
+
+    @property
+    @np.deprecate(message="F attribute is not used anywhere any longer and "
+                          "is deprecated in scipy 0.18.")
+    def F(self):
+        return dict(zip(self.xk, self.qvals))
+
+    @property
+    @np.deprecate(message="Finv attribute is not used anywhere any longer and "
+                          "is deprecated in scipy 0.18.")
+    def Finv(self):
+        decreasing_keys = sorted(self.F.keys(), reverse=True)
+        return dict((self.F[k], k) for k in decreasing_keys)
 
 
 def get_distribution_names(namespace_pairs, rv_base_class):

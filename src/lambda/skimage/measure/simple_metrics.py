@@ -2,16 +2,17 @@ from __future__ import division
 
 import numpy as np
 from ..util.dtype import dtype_range
-from .._shared.utils import skimage_deprecation, warn
 
-__all__ = ['compare_mse',
-           'compare_nrmse',
+__all__ = ['compare_mse', 
+           'compare_nrmse', 
            'compare_psnr',
            ]
 
 
 def _assert_compatible(im1, im2):
     """Raise an error if the shape and dtype do not match."""
+    if not im1.dtype == im2.dtype:
+        raise ValueError('Input images must have the same dtype.')
     if not im1.shape == im2.shape:
         raise ValueError('Input images must have the same dimensions.')
     return
@@ -20,8 +21,10 @@ def _assert_compatible(im1, im2):
 def _as_floats(im1, im2):
     """Promote im1, im2 to nearest appropriate floating point precision."""
     float_type = np.result_type(im1.dtype, im2.dtype, np.float32)
-    im1 = np.asarray(im1, dtype=float_type)
-    im2 = np.asarray(im2, dtype=float_type)
+    if im1.dtype != float_type:
+        im1 = im1.astype(float_type)
+    if im2.dtype != float_type:
+        im2 = im2.astype(float_type)
     return im1, im2
 
 
@@ -59,18 +62,9 @@ def compare_nrmse(im_true, im_test, norm_type='Euclidean'):
         NRMSE.  There is no standard method of normalization across the
         literature [1]_.  The methods available here are as follows:
 
-        - 'Euclidean' : normalize by the averaged Euclidean norm of
-          ``im_true``::
-
-              NRMSE = RMSE * sqrt(N) / || im_true ||
-
-          where || . || denotes the Frobenius norm and ``N = im_true.size``.
-          This result is equivalent to::
-
-              NRMSE = || im_true - im_test || / || im_true ||.
-
+        - 'Euclidean' : normalize by the Euclidean norm of ``im_true``.
         - 'min-max'   : normalize by the intensity range of ``im_true``.
-        - 'mean'      : normalize by the mean of ``im_true``
+        - 'mean'      : normalize by the mean of ``im_true``.
 
     Returns
     -------
@@ -97,7 +91,7 @@ def compare_nrmse(im_true, im_test, norm_type='Euclidean'):
     return np.sqrt(compare_mse(im_true, im_test)) / denom
 
 
-def compare_psnr(im_true, im_test, data_range=None):
+def compare_psnr(im_true, im_test, dynamic_range=None):
     """ Compute the peak signal to noise ratio (PSNR) for an image.
 
     Parameters
@@ -106,8 +100,8 @@ def compare_psnr(im_true, im_test, data_range=None):
         Ground-truth image.
     im_test : ndarray
         Test image.
-    data_range : int
-        The data range of the input image (distance between minimum and
+    dynamic_range : int
+        The dynamic range of the input image (distance between minimum and
         maximum possible values).  By default, this is estimated from the image
         data-type.
 
@@ -122,24 +116,20 @@ def compare_psnr(im_true, im_test, data_range=None):
 
     """
     _assert_compatible(im_true, im_test)
-
-    if data_range is None:
-        if im_true.dtype != im_test.dtype:
-            warn("Inputs have mismatched dtype.  Setting data_range based on "
-                 "im_true.")
+    if dynamic_range is None:
         dmin, dmax = dtype_range[im_true.dtype.type]
         true_min, true_max = np.min(im_true), np.max(im_true)
         if true_max > dmax or true_min < dmin:
             raise ValueError(
                 "im_true has intensity values outside the range expected for "
-                "its data type.  Please manually specify the data_range")
+                "its data type.  Please manually specify the dynamic_range")
         if true_min >= 0:
             # most common case (255 for uint8, 1 for float)
-            data_range = dmax
+            dynamic_range = dmax
         else:
-            data_range = dmax - dmin
+            dynamic_range = dmax - dmin
 
     im_true, im_test = _as_floats(im_true, im_test)
 
     err = compare_mse(im_true, im_test)
-    return 10 * np.log10((data_range ** 2) / err)
+    return 10 * np.log10((dynamic_range ** 2) / err)

@@ -38,10 +38,15 @@ import array
 import struct
 import io
 import warnings
-from . import Image, ImageFile, TiffImagePlugin
-from ._binary import i8, o8, i16be as i16
-from .JpegPresets import presets
-from ._util import isStringType
+from struct import unpack_from
+from PIL import Image, ImageFile, TiffImagePlugin, _binary
+from PIL.JpegPresets import presets
+from PIL._util import isStringType
+
+i8 = _binary.i8
+o8 = _binary.o8
+i16 = _binary.i16be
+i32 = _binary.i32be
 
 __version__ = "0.6"
 
@@ -83,9 +88,8 @@ def APP(self, marker):
             self.info["jfif_unit"] = jfif_unit
             self.info["jfif_density"] = jfif_density
     elif marker == 0xFFE1 and s[:5] == b"Exif\0":
-        if "exif" not in self.info:
-            # extract Exif information (incomplete)
-            self.info["exif"] = s  # FIXME: value will change
+        # extract Exif information (incomplete)
+        self.info["exif"] = s  # FIXME: value will change
     elif marker == 0xFFE2 and s[:5] == b"FPXR\0":
         # extract FlashPix information (incomplete)
         self.info["flashpix"] = s  # FIXME: value will change
@@ -118,26 +122,6 @@ def APP(self, marker):
         # plus constant header size
         self.info["mpoffset"] = self.fp.tell() - n + 4
 
-    # If DPI isn't in JPEG header, fetch from EXIF
-    if "dpi" not in self.info and "exif" in self.info:
-        try:
-            exif = self._getexif()
-            resolution_unit = exif[0x0128]
-            x_resolution = exif[0x011A]
-            try:
-                dpi = x_resolution[0] / x_resolution[1]
-            except TypeError:
-                dpi = x_resolution
-            if resolution_unit == 3:  # cm
-                # 1 dpcm = 2.54 dpi
-                dpi *= 2.54
-            self.info["dpi"] = dpi, dpi
-        except (KeyError, SyntaxError, ZeroDivisionError):
-            # SyntaxError for invalid/unreadable exif
-            # KeyError for dpi not included
-            # ZeroDivisionError for invalid dpi rational value
-            self.info["dpi"] = 72, 72
-
 
 def COM(self, marker):
     #
@@ -159,7 +143,7 @@ def SOF(self, marker):
 
     n = i16(self.fp.read(2))-2
     s = ImageFile._safe_read(self.fp, n)
-    self._size = i16(s[3:]), i16(s[1:])
+    self.size = i16(s[3:]), i16(s[1:])
 
     self.bits = i8(s[0])
     if self.bits != 8:
@@ -334,6 +318,7 @@ class JpegImageFile(ImageFile.ImageFile):
 
             if i in MARKER:
                 name, description, handler = MARKER[i]
+                # print(hex(i), name, description)
                 if handler is not None:
                     handler(self, i)
                 if i == 0xFFDA:  # start of scan
@@ -352,21 +337,6 @@ class JpegImageFile(ImageFile.ImageFile):
                 s = self.fp.read(1)
             else:
                 raise SyntaxError("no marker found")
-
-    def load_read(self, read_bytes):
-        """
-        internal: read more image data
-        For premature EOF and LOAD_TRUNCATED_IMAGES adds EOI marker
-        so libjpeg can finish decoding
-        """
-        s = self.fp.read(read_bytes)
-
-        if not s and ImageFile.LOAD_TRUNCATED_IMAGES:
-            # Premature EOF.
-            # Pretend file is finished adding EOI marker
-            return b"\xFF\xD9"
-
-        return s
 
     def draft(self, mode, size):
 
@@ -390,7 +360,7 @@ class JpegImageFile(ImageFile.ImageFile):
                 if scale >= s:
                     break
             e = e[0], e[1], (e[2]-e[0]+s-1)//s+e[0], (e[3]-e[1]+s-1)//s+e[1]
-            self._size = ((self.size[0]+s-1)//s, (self.size[1]+s-1)//s)
+            self.size = ((self.size[0]+s-1)//s, (self.size[1]+s-1)//s)
             scale = s
 
         self.tile = [(d, e, o, a)]
@@ -423,7 +393,7 @@ class JpegImageFile(ImageFile.ImageFile):
                 pass
 
         self.mode = self.im.mode
-        self._size = self.im.size
+        self.size = self.im.size
 
         self.tile = []
 
@@ -441,8 +411,7 @@ def _fixup_dict(src_dict):
         try:
             if len(value) == 1 and not isinstance(value, dict):
                 return value[0]
-        except:
-            pass
+        except: pass
         return value
 
     return {k: _fixup(v) for k, v in src_dict.items()}
@@ -524,7 +493,7 @@ def _getmp(self):
     try:
         rawmpentries = mp[0xB002]
         for entrynum in range(0, quant):
-            unpackedentry = struct.unpack_from(
+            unpackedentry = unpack_from(
                 '{}LLLHH'.format(endianness), rawmpentries, entrynum * 16)
             labels = ('Attribute', 'Size', 'DataOffset', 'EntryNo1',
                       'EntryNo2')
@@ -573,6 +542,7 @@ RAWMODE = {
     "1": "L",
     "L": "L",
     "RGB": "RGB",
+    "RGBA": "RGB",
     "RGBX": "RGB",
     "CMYK": "CMYK;I",  # assume adobe conventions
     "YCbCr": "YCbCr",
@@ -621,6 +591,14 @@ def _save(im, fp, filename):
     except KeyError:
         raise IOError("cannot write mode %s as JPEG" % im.mode)
 
+    if im.mode == 'RGBA':
+        warnings.warn(
+            'You are saving RGBA image as JPEG. The alpha channel will be '
+            'discarded. This conversion is deprecated and will be disabled '
+            'in Pillow 3.7. Please, convert the image to RGB explicitly.',
+            DeprecationWarning
+        )
+
     info = im.encoderinfo
 
     dpi = [int(round(x)) for x in info.get("dpi", (0, 0))]
@@ -650,11 +628,7 @@ def _save(im, fp, filename):
         subsampling = 0
     elif subsampling == "4:2:2":
         subsampling = 1
-    elif subsampling == "4:2:0":
-        subsampling = 2
     elif subsampling == "4:1:1":
-        # For compatibility. Before Pillow 4.3, 4:1:1 actually meant 4:2:0.
-        # Set 4:2:0 if someone is still using that value.
         subsampling = 2
     elif subsampling == "keep":
         if im.format != "JPEG":
@@ -683,7 +657,7 @@ def _save(im, fp, filename):
             for idx, table in enumerate(qtables):
                 try:
                     if len(table) != 64:
-                        raise TypeError
+                        raise
                     table = array.array('B', table)
                 except TypeError:
                     raise ValueError("Invalid quantization table")
@@ -719,8 +693,8 @@ def _save(im, fp, filename):
     # "progressive" is the official name, but older documentation
     # says "progression"
     # FIXME: issue a warning if the wrong form is used (post-1.1.7)
-    progressive = (info.get("progressive", False) or
-                   info.get("progression", False))
+    progressive = info.get("progressive", False) or\
+                  info.get("progression", False)
 
     optimize = info.get("optimize", False)
 
@@ -739,7 +713,7 @@ def _save(im, fp, filename):
         )
 
     # if we optimize, libjpeg needs a buffer big enough to hold the whole image
-    # in a shot. Guessing on the size, at im.size bytes. (raw pixel size is
+    # in a shot. Guessing on the size, at im.size bytes. (raw pizel size is
     # channels*size, this is a value that's been used in a django patch.
     # https://github.com/matthewwithanm/django-imagekit/issues/50
     bufsize = 0
@@ -754,9 +728,8 @@ def _save(im, fp, filename):
             bufsize = im.size[0] * im.size[1]
 
     # The exif info needs to be written as one block, + APP1, + one spare byte.
-    # Ensure that our buffer is big enough. Same with the icc_profile block.
-    bufsize = max(ImageFile.MAXBLOCK, bufsize, len(info.get("exif", b"")) + 5,
-                  len(extra) + 1)
+    # Ensure that our buffer is big enough
+    bufsize = max(ImageFile.MAXBLOCK, bufsize, len(info.get("exif", b"")) + 5)
 
     ImageFile._save(im, fp, [("jpeg", (0, 0)+im.size, 0, rawmode)], bufsize)
 
@@ -792,13 +765,15 @@ def jpeg_factory(fp=None, filename=None):
     return im
 
 
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------q-
 # Registry stuff
 
 Image.register_open(JpegImageFile.format, jpeg_factory, _accept)
 Image.register_save(JpegImageFile.format, _save)
 
-Image.register_extensions(JpegImageFile.format,
-                          [".jfif", ".jpe", ".jpg", ".jpeg"])
+Image.register_extension(JpegImageFile.format, ".jfif")
+Image.register_extension(JpegImageFile.format, ".jpe")
+Image.register_extension(JpegImageFile.format, ".jpg")
+Image.register_extension(JpegImageFile.format, ".jpeg")
 
 Image.register_mime(JpegImageFile.format, "image/jpeg")

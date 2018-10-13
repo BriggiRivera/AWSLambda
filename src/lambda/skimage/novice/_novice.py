@@ -215,7 +215,7 @@ class Picture(object):
     Load an image from a URL (the URL must start with ``http(s)://`` or
     ``ftp(s)://``):
 
-    >>> picture = novice.open('https://scikit-image.org/_static/img/logo.png')  # doctest: +SKIP
+    >>> picture = novice.open('http://scikit-image.org/_static/img/logo.png')
 
     Create a blank 100 pixel wide, 200 pixel tall white image:
 
@@ -326,9 +326,6 @@ class Picture(object):
         path : str
             Path (with file extension) where the picture is saved.
         """
-        if (self.array.ndim == 3 and self.array.shape[-1] == 4 and
-                os.path.splitext(path)[-1].lower() in ['.jpg', '.jpeg']):
-            self.array = self.array[..., :-1]
         io.imsave(path, self.array)
         self._modified = False
         self._path = os.path.abspath(path)
@@ -371,8 +368,7 @@ class Picture(object):
             # skimage dimensions are flipped: y, x
             new_size = (int(value[1]), int(value[0]))
             new_array = resize(self.array, new_size, order=0,
-                               preserve_range=True, mode='constant',
-                               anti_aliasing=False)
+                               preserve_range=True)
             self.array = new_array.astype(np.uint8)
 
             self._array_modified()

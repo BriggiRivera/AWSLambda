@@ -15,9 +15,8 @@ Use skimage.io.imshow(img, fancy=True)'''
 
 from textwrap import dedent
 
-from qtpy import QtCore, QtWidgets
-from qtpy.QtWidgets import QMainWindow, QLabel, QWidget, QFrame, QGridLayout
-from qtpy.QtGui import QImage, QPixmap
+from PyQt4 import QtCore, QtGui
+from PyQt4.QtGui import QMainWindow, QImage, QPixmap, QLabel, QWidget, QFrame
 
 from .q_color_mixer import MixerPanel
 from .q_histogram import QuadHistogram
@@ -66,7 +65,7 @@ class ImageLabel(QLabel):
 class RGBHSVDisplay(QFrame):
     def __init__(self):
         QFrame.__init__(self)
-        self.setFrameStyle(QFrame.Box | QFrame.Sunken)
+        self.setFrameStyle(QtGui.QFrame.Box | QtGui.QFrame.Sunken)
 
         self.posx_label = QLabel('X-pos:')
         self.posx_value = QLabel()
@@ -85,7 +84,7 @@ class RGBHSVDisplay(QFrame):
         self.v_label = QLabel('V:')
         self.v_value = QLabel()
 
-        self.layout = QGridLayout(self)
+        self.layout = QtGui.QGridLayout(self)
         self.layout.addWidget(self.posx_label, 0, 0)
         self.layout.addWidget(self.posx_value, 0, 1)
         self.layout.addWidget(self.posy_label, 1, 0)
@@ -123,16 +122,17 @@ class SkiviImageWindow(QMainWindow):
 
         self.mgr = mgr
         self.main_widget = QWidget()
-        self.layout = QGridLayout(self.main_widget)
+        self.layout = QtGui.QGridLayout(self.main_widget)
         self.setCentralWidget(self.main_widget)
 
         self.label = ImageLabel(self, arr)
         self.label_container = QFrame()
-        self.label_container.setFrameShape(QFrame.StyledPanel | QFrame.Sunken)
+        self.label_container.setFrameShape(
+            QtGui.QFrame.StyledPanel | QtGui.QFrame.Sunken)
         self.label_container.setLineWidth(1)
 
-        self.label_container.layout = QGridLayout(self.label_container)
-        self.label_container.layout.setContentsMargins(0, 0, 0, 0)
+        self.label_container.layout = QtGui.QGridLayout(self.label_container)
+        self.label_container.layout.setMargin(0)
         self.label_container.layout.addWidget(self.label, 0, 0)
         self.layout.addWidget(self.label_container, 0, 0)
 
@@ -157,9 +157,9 @@ class SkiviImageWindow(QMainWindow):
         self.layout.setColumnStretch(0, 1)
         self.layout.setRowStretch(0, 1)
 
-        self.save_file = QtWidgets.QPushButton('Save to File')
+        self.save_file = QtGui.QPushButton('Save to File')
         self.save_file.clicked.connect(self.save_to_file)
-        self.save_stack = QtWidgets.QPushButton('Save to Stack')
+        self.save_stack = QtGui.QPushButton('Save to Stack')
         self.save_stack.clicked.connect(self.save_to_stack)
         self.save_file.show()
         self.save_stack.show()
@@ -217,18 +217,18 @@ class SkiviImageWindow(QMainWindow):
             Use io.pop() to retrieve the most recently
             pushed image.''')
         msglabel = QLabel(msg)
-        dialog = QtWidgets.QDialog()
-        ok = QtWidgets.QPushButton('OK', dialog)
+        dialog = QtGui.QDialog()
+        ok = QtGui.QPushButton('OK', dialog)
         ok.clicked.connect(dialog.accept)
         ok.setDefault(True)
-        dialog.layout = QGridLayout(dialog)
+        dialog.layout = QtGui.QGridLayout(dialog)
         dialog.layout.addWidget(msglabel, 0, 0, 1, 3)
         dialog.layout.addWidget(ok, 1, 1)
         dialog.exec_()
 
     def save_to_file(self):
         from ... import io
-        filename = str(QtWidgets.QFileDialog.getSaveFileName())
+        filename = str(QtGui.QFileDialog.getSaveFileName())
         if len(filename) == 0:
             return
         io.imsave(filename, self.arr)

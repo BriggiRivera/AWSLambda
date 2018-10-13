@@ -18,17 +18,20 @@
 # the WalImageFile.open() function instead.
 
 # This reader is based on the specification available from:
-#    https://www.flipcode.com/archives/Quake_2_BSP_File_Format.shtml
+#    http://www.flipcode.com/archives/Quake_2_BSP_File_Format.shtml
 # and has been tested with a few sample files found using google.
 
-from . import Image
-from ._binary import i32le as i32
+from __future__ import print_function
+
+from PIL import Image, _binary
 
 try:
     import builtins
 except ImportError:
     import __builtin__
     builtins = __builtin__
+
+i32 = _binary.i32le
 
 
 def open(filename):
@@ -73,7 +76,6 @@ def open(filename):
     else:
         with builtins.open(filename, "rb") as fp:
             return imopen(fp)
-
 
 quake2palette = (
     # default palette taken from piffo 0.93 by Hans Häggström

@@ -17,7 +17,10 @@
 #
 
 import array
-from . import ImageColor, GimpPaletteFile, GimpGradientFile, PaletteFile
+from PIL import ImageColor
+from PIL import GimpPaletteFile
+from PIL import GimpGradientFile
+from PIL import PaletteFile
 
 
 class ImagePalette(object):
@@ -59,7 +62,7 @@ class ImagePalette(object):
 
     def getdata(self):
         """
-        Get palette contents in format suitable for the low-level
+        Get palette contents in format suitable # for the low-level
         ``im.putpalette`` primitive.
 
         .. warning:: This method is experimental.

@@ -20,6 +20,8 @@
 #      Access.c implementation.
 #
 
+from __future__ import print_function
+
 import logging
 import sys
 
@@ -49,7 +51,8 @@ class PyAccess(object):
         self.image8 = ffi.cast('unsigned char **', vals['image8'])
         self.image32 = ffi.cast('int **', vals['image32'])
         self.image = ffi.cast('unsigned char **', vals['image'])
-        self.xsize, self.ysize = img.im.size
+        self.xsize = vals['xsize']
+        self.ysize = vals['ysize']
 
         # Keep pointer to im object to prevent dereferencing.
         self._im = img.im
@@ -68,9 +71,8 @@ class PyAccess(object):
         numerical value for single band images, and a tuple for
         multi-band images
 
-        :param xy: The pixel coordinate, given as (x, y). See
-           :ref:`coordinate-system`.
-        :param color: The pixel value.
+        :param xy: The pixel coordinate, given as (x, y).
+        :param value: The pixel value.
         """
         if self.readonly:
             raise ValueError('Attempt to putpixel a read only image')
@@ -83,8 +85,7 @@ class PyAccess(object):
         value for single band images or a tuple for multiple band
         images
 
-        :param xy: The pixel coordinate, given as (x, y). See
-          :ref:`coordinate-system`.
+        :param xy: The pixel coordinate, given as (x, y).
         :returns: a pixel value for single band images, a tuple of
           pixel values for multiband images.
         """
@@ -134,7 +135,6 @@ class _PyAccess32_3(PyAccess):
         pixel.r = min(color[0], 255)
         pixel.g = min(color[1], 255)
         pixel.b = min(color[2], 255)
-        pixel.a = 255
 
 
 class _PyAccess32_4(PyAccess):
@@ -167,7 +167,7 @@ class _PyAccess8(PyAccess):
         try:
             # integer
             self.pixels[y][x] = min(color, 255)
-        except TypeError:
+        except:
             # tuple
             self.pixels[y][x] = min(color[0], 255)
 
@@ -184,7 +184,7 @@ class _PyAccessI16_N(PyAccess):
         try:
             # integer
             self.pixels[y][x] = min(color, 65535)
-        except TypeError:
+        except:
             # tuple
             self.pixels[y][x] = min(color[0], 65535)
 
@@ -272,7 +272,7 @@ class _PyAccessF(PyAccess):
         try:
             # not a tuple
             self.pixels[y][x] = color
-        except TypeError:
+        except:
             # tuple
             self.pixels[y][x] = color[0]
 

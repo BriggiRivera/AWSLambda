@@ -16,8 +16,8 @@
 
 
 import re
-from . import Image, ImageFile, ImagePalette
-from ._binary import i8, o8
+from PIL import Image, ImageFile, ImagePalette
+from PIL._binary import i8, o8
 
 __version__ = "0.2"
 
@@ -51,7 +51,7 @@ class XpmImageFile(ImageFile.ImageFile):
             if m:
                 break
 
-        self._size = int(m.group(1)), int(m.group(2))
+        self.size = int(m.group(1)), int(m.group(2))
 
         pal = int(m.group(3))
         bpp = int(m.group(4))
@@ -116,11 +116,12 @@ class XpmImageFile(ImageFile.ImageFile):
         for i in range(ysize):
             s[i] = self.fp.readline()[1:xsize+1].ljust(xsize)
 
+        self.fp = None
+
         return b"".join(s)
 
 #
 # Registry
-
 
 Image.register_open(XpmImageFile.format, XpmImageFile, _accept)
 

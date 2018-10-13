@@ -6,8 +6,11 @@ from ...util import img_as_ubyte
 
 # utilities to make life easier for plugin writers.
 
-import multiprocessing
-CPU_COUNT = multiprocessing.cpu_count()
+try:
+    import multiprocessing
+    CPU_COUNT = multiprocessing.cpu_count()
+except:
+    CPU_COUNT = 2
 
 
 class GuiLockError(Exception):
@@ -154,13 +157,12 @@ def prepare_for_display(npy_img):
     return out
 
 
-def histograms(image, nbins):
+def histograms(img, nbins):
     '''Calculate the channel histograms of the current image.
 
     Parameters
     ----------
-    image : ndarray, ndim=3, dtype=np.uint8
-        Input image.
+    img : ndarray, ndim=3, dtype=np.uint8
     nbins : int
         The number of bins.
 
@@ -173,7 +175,7 @@ def histograms(image, nbins):
 
     '''
 
-    return _histograms.histograms(image, nbins)
+    return _histograms.histograms(img, nbins)
 
 
 class ImgThread(threading.Thread):
@@ -198,22 +200,21 @@ class ThreadDispatch(object):
             self.chunks.append((img, stateimg))
 
         elif self.cores >= 4:
-            self.chunks.append((img[:(height // 4), :, :],
-                                stateimg[:(height // 4), :, :]))
-            self.chunks.append((img[(height // 4):(height // 2), :, :],
-                                stateimg[(height // 4):(height // 2), :, :]))
-            self.chunks.append((img[(height // 2):(3 * height // 4), :, :],
-                                stateimg[(height // 2):(3 * height // 4), :, :]
-                                ))
-            self.chunks.append((img[(3 * height // 4):, :, :],
-                                stateimg[(3 * height // 4):, :, :]))
+            self.chunks.append((img[:(height / 4), :, :],
+                                stateimg[:(height / 4), :, :]))
+            self.chunks.append((img[(height / 4):(height / 2), :, :],
+                                stateimg[(height / 4):(height / 2), :, :]))
+            self.chunks.append((img[(height / 2):(3 * height / 4), :, :],
+                                stateimg[(height / 2):(3 * height / 4), :, :]))
+            self.chunks.append((img[(3 * height / 4):, :, :],
+                                stateimg[(3 * height / 4):, :, :]))
 
         # if they dont have 1, or 4 or more, 2 is good.
         else:
-            self.chunks.append((img[:(height // 2), :, :],
-                                stateimg[:(height // 2), :, :]))
-            self.chunks.append((img[(height // 2):, :, :],
-                               stateimg[(height // 2):, :, :]))
+            self.chunks.append((img[:(height / 2), :, :],
+                                stateimg[:(height / 2), :, :]))
+            self.chunks.append((img[(height / 2):, :, :],
+                               stateimg[(height / 2):, :, :]))
 
         for i in range(len(self.chunks)):
             self.threads.append(ImgThread(func, self.chunks[i][0],

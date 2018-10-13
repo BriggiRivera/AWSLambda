@@ -17,13 +17,9 @@ class IntelCCompiler(UnixCCompiler):
 
     def __init__(self, verbose=0, dry_run=0, force=0):
         UnixCCompiler.__init__(self, verbose, dry_run, force)
-
-        v = self.get_version()
-        mpopt = 'openmp' if v and v < '15' else 'qopenmp'
         self.cc_exe = ('icc -fPIC -fp-model strict -O3 '
-                       '-fomit-frame-pointer -{}').format(mpopt)
+                       '-fomit-frame-pointer -openmp')
         compiler = self.cc_exe
-
         if platform.system() == 'Darwin':
             shared_flag = '-Wl,-undefined,dynamic_lookup'
         else:
@@ -57,13 +53,9 @@ class IntelEM64TCCompiler(UnixCCompiler):
 
     def __init__(self, verbose=0, dry_run=0, force=0):
         UnixCCompiler.__init__(self, verbose, dry_run, force)
-
-        v = self.get_version()
-        mpopt = 'openmp' if v and v < '15' else 'qopenmp'
         self.cc_exe = ('icc -m64 -fPIC -fp-model strict -O3 '
-                       '-fomit-frame-pointer -{}').format(mpopt)
+                       '-fomit-frame-pointer -openmp -xSSE4.2')
         compiler = self.cc_exe
-
         if platform.system() == 'Darwin':
             shared_flag = '-Wl,-undefined,dynamic_lookup'
         else:
@@ -87,7 +79,7 @@ if platform.system() == 'Windows':
 
         def __init__(self, verbose=0, dry_run=0, force=0):
             MSVCCompiler.__init__(self, verbose, dry_run, force)
-            version_match = simple_version_match(start=r'Intel\(R\).*?32,')
+            version_match = simple_version_match(start='Intel\(R\).*?32,')
             self.__version = version_match
 
         def initialize(self, plat_name=None):
@@ -96,7 +88,7 @@ if platform.system() == 'Windows':
             self.lib = self.find_exe('xilib')
             self.linker = self.find_exe('xilink')
             self.compile_options = ['/nologo', '/O3', '/MD', '/W3',
-                                    '/Qstd=c99']
+                                    '/Qstd=c99', '/QaxSSE4.2']
             self.compile_options_debug = ['/nologo', '/Od', '/MDd', '/W3',
                                           '/Qstd=c99', '/Z7', '/D_DEBUG']
 
@@ -109,5 +101,5 @@ if platform.system() == 'Windows':
 
         def __init__(self, verbose=0, dry_run=0, force=0):
             MSVCCompiler.__init__(self, verbose, dry_run, force)
-            version_match = simple_version_match(start=r'Intel\(R\).*?64,')
+            version_match = simple_version_match(start='Intel\(R\).*?64,')
             self.__version = version_match

@@ -72,7 +72,8 @@ class ContainerIO(object):
         """
         Read data.
 
-        :param n: Number of bytes to read. If omitted or zero,
+        @def read(bytes=0)
+        :param bytes: Number of bytes to read. If omitted or zero,
             read until end of region.
         :returns: An 8-bit string.
         """
@@ -107,10 +108,10 @@ class ContainerIO(object):
 
         :returns: A list of 8-bit strings.
         """
-        lines = []
+        l = []
         while True:
             s = self.readline()
             if not s:
                 break
-            lines.append(s)
-        return lines
+            l.append(s)
+        return l

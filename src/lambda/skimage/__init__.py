@@ -47,60 +47,51 @@ Utility Functions
 -----------------
 img_as_float
     Convert an image to floating point format, with values in [0, 1].
-    Is similar to `img_as_float64`, but will not convert lower-precision
-    floating point arrays to `float64`.
-img_as_float32
-    Convert an image to single-precision (32-bit) floating point format,
-    with values in [0, 1].
-img_as_float64
-    Convert an image to double-precision (64-bit) floating point format,
-    with values in [0, 1].
 img_as_uint
     Convert an image to unsigned integer format, with values in [0, 65535].
 img_as_int
     Convert an image to signed integer format, with values in [-32768, 32767].
 img_as_ubyte
     Convert an image to unsigned byte format, with values in [0, 255].
-img_as_bool
-    Convert an image to boolean format, with values either True or False.
-dtype_limits
-    Return intensity limits, i.e. (min, max) tuple, of the image's dtype.
 
 """
 
+import os.path as osp
 import imp
 import functools
 import warnings
 import sys
 
-__version__ = '0.14.1'
+pkg_dir = osp.abspath(osp.dirname(__file__))
+data_dir = osp.join(pkg_dir, 'data')
 
+__version__ = '0.12.3'
 
 try:
-    imp.find_module('pytest')
+    imp.find_module('nose')
 except ImportError:
     def _test(doctest=False, verbose=False):
-        """This would run all unit tests, but pytest couldn't be
+        """This would run all unit tests, but nose couldn't be
         imported so the test suite can not run.
         """
-        raise ImportError("Could not load pytest. Unit tests not available.")
+        raise ImportError("Could not load nose. Unit tests not available.")
 
 else:
     def _test(doctest=False, verbose=False):
         """Run all unit tests."""
-        import pytest
-        import warnings
-        args = ['--pyargs', 'skimage']
+        import nose
+        args = ['', pkg_dir, '--exe', '--ignore-files=^_test']
         if verbose:
             args.extend(['-v', '-s'])
         if doctest:
-            args.extend(['--doctest-modules'])
+            args.extend(['--with-doctest', '--ignore-files=^\.',
+                         '--ignore-files=^setup\.py$$', '--ignore-files=test'])
             # Make sure warnings do not break the doc tests
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                success = pytest.main(args)
+                success = nose.run('skimage', argv=args)
         else:
-            success = pytest.main(args)
+            success = nose.run('skimage', argv=args)
         # Return sys.exit code
         if success:
             return 0
@@ -163,18 +154,13 @@ else:
         del geometry
     except ImportError as e:
         _raise_build_error(e)
-    # All skimage root imports go here
-    from .util.dtype import (img_as_float32,
-                             img_as_float64,
-                             img_as_float,
-                             img_as_int,
-                             img_as_uint,
-                             img_as_ubyte,
-                             img_as_bool,
-                             dtype_limits)
-
-    from .util.lookfor import lookfor
-    from .data import data_dir
+    from .util.dtype import *
 
 
-del warnings, functools, imp, sys
+if sys.version.startswith('2.6'):
+    msg = ("Python 2.6 is deprecated and will not be supported in "
+           "scikit-image 0.13+")
+    warnings.warn(msg, stacklevel=2)
+
+
+del warnings, functools, osp, imp, sys

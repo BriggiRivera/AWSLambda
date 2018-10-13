@@ -21,17 +21,13 @@
 
 from __future__ import print_function
 
-from . import Image, ImageFile
-from ._binary import i16le as word, si16le as short, \
-                     i32le as dword, si32le as _long
-from ._util import py3
-
+from PIL import Image, ImageFile, _binary
 
 __version__ = "0.2"
 
 _handler = None
 
-if py3:
+if str != bytes:
     long = int
 
 
@@ -43,7 +39,6 @@ def register_handler(handler):
     """
     global _handler
     _handler = handler
-
 
 if hasattr(Image.core, "drawwmf"):
     # install default handler (windows only)
@@ -64,10 +59,16 @@ if hasattr(Image.core, "drawwmf"):
 
     register_handler(WmfHandler())
 
+# --------------------------------------------------------------------
+
+word = _binary.i16le
+short = _binary.si16le
+dword = _binary.i32le
+_long = _binary.si32le
+
 #
 # --------------------------------------------------------------------
 # Read WMF file
-
 
 def _accept(prefix):
     return (
@@ -109,6 +110,8 @@ class WmfStubImageFile(ImageFile.StubImageFile):
 
             self.info["dpi"] = 72
 
+            # print(self.mode, self.size, self.info)
+
             # sanity check (standard metafile header)
             if s[22:26] != b"\x01\x00\t\x00":
                 raise SyntaxError("Unsupported WMF file format")
@@ -143,7 +146,7 @@ class WmfStubImageFile(ImageFile.StubImageFile):
             raise SyntaxError("Unsupported file format")
 
         self.mode = "RGB"
-        self._size = size
+        self.size = size
 
         loader = self._load()
         if loader:
@@ -154,7 +157,7 @@ class WmfStubImageFile(ImageFile.StubImageFile):
 
 
 def _save(im, fp, filename):
-    if _handler is None or not hasattr(_handler, "save"):
+    if _handler is None or not hasattr("_handler", "save"):
         raise IOError("WMF save handler not installed")
     _handler.save(im, fp, filename)
 
@@ -162,8 +165,8 @@ def _save(im, fp, filename):
 # --------------------------------------------------------------------
 # Registry stuff
 
-
 Image.register_open(WmfStubImageFile.format, WmfStubImageFile, _accept)
 Image.register_save(WmfStubImageFile.format, _save)
 
-Image.register_extensions(WmfStubImageFile.format, [".wmf", ".emf"])
+Image.register_extension(WmfStubImageFile.format, ".wmf")
+Image.register_extension(WmfStubImageFile.format, ".emf")

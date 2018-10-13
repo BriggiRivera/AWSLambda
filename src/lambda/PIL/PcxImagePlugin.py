@@ -25,11 +25,16 @@
 # See the README file for information on usage and redistribution.
 #
 
+from __future__ import print_function
+
 import logging
-from . import Image, ImageFile, ImagePalette
-from ._binary import i8, i16le as i16, o8, o16le as o16
+from PIL import Image, ImageFile, ImagePalette, _binary
 
 logger = logging.getLogger(__name__)
+
+i8 = _binary.i8
+i16 = _binary.i16le
+o8 = _binary.o8
 
 __version__ = "0.6"
 
@@ -100,7 +105,7 @@ class PcxImageFile(ImageFile.ImageFile):
             raise IOError("unknown PCX mode")
 
         self.mode = mode
-        self._size = bbox[2]-bbox[0], bbox[3]-bbox[1]
+        self.size = bbox[2]-bbox[0], bbox[3]-bbox[1]
 
         bbox = (0, 0) + self.size
         logger.debug("size: %sx%s", *self.size)
@@ -110,7 +115,6 @@ class PcxImageFile(ImageFile.ImageFile):
 # --------------------------------------------------------------------
 # save PCX files
 
-
 SAVE = {
     # mode: (version, bits, planes, raw mode)
     "1": (2, 1, 1, "1"),
@@ -119,13 +123,18 @@ SAVE = {
     "RGB": (5, 8, 3, "RGB;L"),
 }
 
+o16 = _binary.o16le
 
-def _save(im, fp, filename):
+
+def _save(im, fp, filename, check=0):
 
     try:
         version, bits, planes, rawmode = SAVE[im.mode]
     except KeyError:
         raise ValueError("Cannot save %s images as PCX" % im.mode)
+
+    if check:
+        return check
 
     # bytes per plane
     stride = (im.size[0] * bits + 7) // 8
@@ -171,7 +180,6 @@ def _save(im, fp, filename):
 
 # --------------------------------------------------------------------
 # registry
-
 
 Image.register_open(PcxImageFile.format, PcxImageFile, _accept)
 Image.register_save(PcxImageFile.format, _save)

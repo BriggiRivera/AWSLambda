@@ -12,9 +12,8 @@ Nearest-neighbor Queries
 
    KDTree      -- class for efficient nearest-neighbor queries
    cKDTree     -- class for efficient nearest-neighbor queries (faster impl.)
+   distance    -- module containing many different distance measures
    Rectangle
-
-Distance metrics are contained in the :mod:`scipy.spatial.distance` submodule.
 
 Delaunay Triangulation, Convex Hulls and Voronoi Diagrams
 =========================================================
@@ -26,7 +25,6 @@ Delaunay Triangulation, Convex Hulls and Voronoi Diagrams
    ConvexHull  -- compute a convex hull for input points
    Voronoi     -- compute a Voronoi diagram hull from input points
    SphericalVoronoi -- compute a Voronoi diagram from input points on the surface of a sphere
-   HalfspaceIntersection -- compute the intersection points of input halfspaces
 
 Plotting Helpers
 ================
@@ -44,7 +42,7 @@ Plotting Helpers
 Simplex representation
 ======================
 The simplices (triangles, tetrahedra, ...) appearing in the Delaunay
-tessellation (N-dim simplices), convex hull facets, and Voronoi ridges
+tesselation (N-dim simplices), convex hull facets, and Voronoi ridges
 (N-1 dim simplices) are represented in the following scheme::
 
     tess = Delaunay(points)
@@ -52,7 +50,7 @@ tessellation (N-dim simplices), convex hull facets, and Voronoi ridges
     voro = Voronoi(points)
 
     # coordinates of the j-th vertex of the i-th simplex
-    tess.points[tess.simplices[i, j], :]        # tessellation element
+    tess.points[tess.simplices[i, j], :]        # tesselation element
     hull.points[hull.simplices[i, j], :]        # convex hull facet
     voro.vertices[voro.ridge_vertices[i, j], :] # ridge between Voronoi cells
 
@@ -102,7 +100,6 @@ __all__ = [s for s in dir() if not s.startswith('_')]
 __all__ += ['distance']
 
 from . import distance
-
-from scipy._lib._testutils import PytestTester
-test = PytestTester(__name__)
-del PytestTester
+from numpy.testing import Tester
+test = Tester().test
+bench = Tester().bench

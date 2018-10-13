@@ -30,11 +30,11 @@
 # See the README file for information on usage and redistribution.
 #
 
-import math
 import numbers
+import warnings
 
-from . import Image, ImageColor
-from ._util import isStringType
+from PIL import Image, ImageColor
+from PIL._util import isStringType
 
 """
 A simple 2D drawing interface for PIL images.
@@ -87,14 +87,25 @@ class ImageDraw(object):
         self.fill = 0
         self.font = None
 
-    def getfont(self):
-        """
-        Get the current default font.
+    def setink(self, ink):
+        raise NotImplementedError("setink() has been removed. " +
+                                  "Please use keyword arguments instead.")
 
-        :returns: An image font."""
+    def setfill(self, onoff):
+        raise NotImplementedError("setfill() has been removed. " +
+                                  "Please use keyword arguments instead.")
+
+    def setfont(self, font):
+        warnings.warn("setfont() is deprecated. " +
+                      "Please set the attribute directly instead.")
+        # compatibility
+        self.font = font
+
+    def getfont(self):
+        """Get the current default font."""
         if not self.font:
             # FIXME: should add a font repository
-            from . import ImageFont
+            from PIL import ImageFont
             self.font = ImageFont.load_default()
         return self.font
 
@@ -119,11 +130,11 @@ class ImageDraw(object):
                 fill = self.draw.draw_ink(fill, self.mode)
         return ink, fill
 
-    def arc(self, xy, start, end, fill=None, width=0):
+    def arc(self, xy, start, end, fill=None):
         """Draw an arc."""
         ink, fill = self._getink(fill)
         if ink is not None:
-            self.draw.draw_arc(xy, start, end, ink, width)
+            self.draw.draw_arc(xy, start, end, ink)
 
     def bitmap(self, xy, bitmap, fill=None):
         """Draw a bitmap."""
@@ -134,80 +145,27 @@ class ImageDraw(object):
         if ink is not None:
             self.draw.draw_bitmap(xy, bitmap.im, ink)
 
-    def chord(self, xy, start, end, fill=None, outline=None, width=0):
+    def chord(self, xy, start, end, fill=None, outline=None):
         """Draw a chord."""
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_chord(xy, start, end, fill, 1)
-        if ink is not None and ink != fill:
-            self.draw.draw_chord(xy, start, end, ink, 0, width)
+        if ink is not None:
+            self.draw.draw_chord(xy, start, end, ink, 0)
 
-    def ellipse(self, xy, fill=None, outline=None, width=0):
+    def ellipse(self, xy, fill=None, outline=None):
         """Draw an ellipse."""
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_ellipse(xy, fill, 1)
-        if ink is not None and ink != fill:
-            self.draw.draw_ellipse(xy, ink, 0, width)
+        if ink is not None:
+            self.draw.draw_ellipse(xy, ink, 0)
 
-    def line(self, xy, fill=None, width=0, joint=None):
+    def line(self, xy, fill=None, width=0):
         """Draw a line, or a connected sequence of line segments."""
-        ink = self._getink(fill)[0]
+        ink, fill = self._getink(fill)
         if ink is not None:
             self.draw.draw_lines(xy, ink, width)
-            if joint == "curve" and width > 4:
-                for i in range(1, len(xy)-1):
-                    point = xy[i]
-                    angles = [
-                        math.degrees(math.atan2(
-                            end[0] - start[0], start[1] - end[1]
-                        )) % 360
-                        for start, end in ((xy[i-1], point), (point, xy[i+1]))
-                    ]
-                    if angles[0] == angles[1]:
-                        # This is a straight line, so no joint is required
-                        continue
-
-                    def coord_at_angle(coord, angle):
-                        x, y = coord
-                        angle -= 90
-                        distance = width/2 - 1
-                        return tuple([
-                            p +
-                            (math.floor(p_d) if p_d > 0 else math.ceil(p_d))
-                            for p, p_d in
-                            ((x, distance * math.cos(math.radians(angle))),
-                             (y, distance * math.sin(math.radians(angle))))
-                        ])
-                    flipped = ((angles[1] > angles[0] and
-                                angles[1] - 180 > angles[0]) or
-                               (angles[1] < angles[0] and
-                                angles[1] + 180 > angles[0]))
-                    coords = [
-                        (point[0] - width/2 + 1, point[1] - width/2 + 1),
-                        (point[0] + width/2 - 1, point[1] + width/2 - 1)
-                    ]
-                    if flipped:
-                        start, end = (angles[1] + 90, angles[0] + 90)
-                    else:
-                        start, end = (angles[0] - 90, angles[1] - 90)
-                    self.pieslice(coords, start - 90, end - 90, fill)
-
-                    if width > 8:
-                        # Cover potential gaps between the line and the joint
-                        if flipped:
-                            gapCoords = [
-                                coord_at_angle(point, angles[0]+90),
-                                point,
-                                coord_at_angle(point, angles[1]+90)
-                            ]
-                        else:
-                            gapCoords = [
-                                coord_at_angle(point, angles[0]-90),
-                                point,
-                                coord_at_angle(point, angles[1]-90)
-                            ]
-                        self.line(gapCoords, fill, width=3)
 
     def shape(self, shape, fill=None, outline=None):
         """(Experimental) Draw a shape."""
@@ -215,16 +173,16 @@ class ImageDraw(object):
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_outline(shape, fill, 1)
-        if ink is not None and ink != fill:
+        if ink is not None:
             self.draw.draw_outline(shape, ink, 0)
 
-    def pieslice(self, xy, start, end, fill=None, outline=None, width=0):
+    def pieslice(self, xy, start, end, fill=None, outline=None):
         """Draw a pieslice."""
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_pieslice(xy, start, end, fill, 1)
-        if ink is not None and ink != fill:
-            self.draw.draw_pieslice(xy, start, end, ink, 0, width)
+        if ink is not None:
+            self.draw.draw_pieslice(xy, start, end, ink, 0)
 
     def point(self, xy, fill=None):
         """Draw one or more individual pixels."""
@@ -237,16 +195,16 @@ class ImageDraw(object):
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_polygon(xy, fill, 1)
-        if ink is not None and ink != fill:
+        if ink is not None:
             self.draw.draw_polygon(xy, ink, 0)
 
-    def rectangle(self, xy, fill=None, outline=None, width=0):
+    def rectangle(self, xy, fill=None, outline=None):
         """Draw a rectangle."""
         ink, fill = self._getink(outline, fill)
         if fill is not None:
             self.draw.draw_rectangle(xy, fill, 1)
-        if ink is not None and ink != fill:
-            self.draw.draw_rectangle(xy, ink, 0, width)
+        if ink is not None:
+            self.draw.draw_rectangle(xy, ink, 0)
 
     def _multiline_check(self, text):
         """Draw text."""
@@ -264,6 +222,7 @@ class ImageDraw(object):
         if self._multiline_check(text):
             return self.multiline_text(xy, text, fill, font, anchor,
                                        *args, **kwargs)
+
         ink, fill = self._getink(fill)
         if font is None:
             font = self.getfont()
@@ -271,18 +230,17 @@ class ImageDraw(object):
             ink = fill
         if ink is not None:
             try:
-                mask, offset = font.getmask2(text, self.fontmode,
-                                             *args, **kwargs)
+                mask, offset = font.getmask2(text, self.fontmode)
                 xy = xy[0] + offset[0], xy[1] + offset[1]
             except AttributeError:
                 try:
-                    mask = font.getmask(text, self.fontmode, *args, **kwargs)
+                    mask = font.getmask(text, self.fontmode)
                 except TypeError:
                     mask = font.getmask(text)
             self.draw.draw_bitmap(xy, mask, ink)
 
     def multiline_text(self, xy, text, fill=None, font=None, anchor=None,
-                       spacing=4, align="left", direction=None, features=None):
+                       spacing=4, align="left"):
         widths = []
         max_width = 0
         lines = self._multiline_split(text)
@@ -300,33 +258,28 @@ class ImageDraw(object):
             elif align == "right":
                 left += (max_width - widths[idx])
             else:
-                raise ValueError('align must be "left", "center" or "right"')
-            self.text((left, top), line, fill, font, anchor,
-                      direction=direction, features=features)
+                assert False, 'align must be "left", "center" or "right"'
+            self.text((left, top), line, fill, font, anchor)
             top += line_spacing
             left = xy[0]
 
-    def textsize(self, text, font=None, spacing=4, direction=None,
-                 features=None):
+    def textsize(self, text, font=None, *args, **kwargs):
         """Get the size of a given string, in pixels."""
         if self._multiline_check(text):
-            return self.multiline_textsize(text, font, spacing,
-                                           direction, features)
+            return self.multiline_textsize(text, font, *args, **kwargs)
 
         if font is None:
             font = self.getfont()
-        return font.getsize(text, direction, features)
+        return font.getsize(text)
 
-    def multiline_textsize(self, text, font=None, spacing=4, direction=None,
-                           features=None):
+    def multiline_textsize(self, text, font=None, spacing=4):
         max_width = 0
         lines = self._multiline_split(text)
         line_spacing = self.textsize('A', font=font)[1] + spacing
         for line in lines:
-            line_width, line_height = self.textsize(line, font, spacing,
-                                                    direction, features)
+            line_width, line_height = self.textsize(line, font)
             max_width = max(max_width, line_width)
-        return max_width, len(lines)*line_spacing - spacing
+        return max_width, len(lines)*line_spacing
 
 
 def Draw(im, mode=None):
@@ -344,7 +297,6 @@ def Draw(im, mode=None):
         return im.getdraw(mode)
     except AttributeError:
         return ImageDraw(im, mode)
-
 
 # experimental access to the outline API
 try:
@@ -367,74 +319,64 @@ def getdraw(im=None, hints=None):
     handler = None
     if not hints or "nicest" in hints:
         try:
-            from . import _imagingagg as handler
+            from PIL import _imagingagg as handler
         except ImportError:
             pass
     if handler is None:
-        from . import ImageDraw2 as handler
+        from PIL import ImageDraw2 as handler
     if im:
         im = handler.Draw(im)
     return im, handler
 
 
-def floodfill(image, xy, value, border=None, thresh=0):
+def floodfill(image, xy, value, border=None):
     """
     (experimental) Fills a bounded region with a given color.
 
     :param image: Target image.
-    :param xy: Seed position (a 2-item coordinate tuple). See
-        :ref:`coordinate-system`.
+    :param xy: Seed position (a 2-item coordinate tuple).
     :param value: Fill color.
     :param border: Optional border value.  If given, the region consists of
         pixels with a color different from the border color.  If not given,
         the region consists of pixels having the same color as the seed
         pixel.
-    :param thresh: Optional threshold value which specifies a maximum
-        tolerable difference of a pixel value from the 'background' in
-        order for it to be replaced. Useful for filling regions of non-
-        homogeneous, but similar, colors.
     """
     # based on an implementation by Eric S. Raymond
-    # amended by yo1995 @20180806
     pixel = image.load()
     x, y = xy
     try:
         background = pixel[x, y]
-        if _color_diff(value, background) <= thresh:
+        if background == value:
             return  # seed point already has fill color
         pixel[x, y] = value
-    except (ValueError, IndexError):
+    except IndexError:
         return  # seed point outside image
-    edge = {(x, y)}
-    full_edge = set()  # use a set to keep record of current and previous edge pixels to reduce memory consumption
-    while edge:
-        new_edge = set()
-        for (x, y) in edge:  # 4 adjacent method
-            for (s, t) in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
-                if (s, t) in full_edge:
-                    continue  # if already processed, skip
-                try:
-                    p = pixel[s, t]
-                except (ValueError, IndexError):
-                    pass
-                else:
-                    full_edge.add((s, t))
-                    if border is None:
-                        fill = _color_diff(p, background) <= thresh
+    edge = [(x, y)]
+    if border is None:
+        while edge:
+            newedge = []
+            for (x, y) in edge:
+                for (s, t) in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
+                    try:
+                        p = pixel[s, t]
+                    except IndexError:
+                        pass
                     else:
-                        fill = p != value and p != border
-                    if fill:
-                        pixel[s, t] = value
-                        new_edge.add((s, t))
-        full_edge = edge  # discard pixels processed
-        edge = new_edge
-
-
-def _color_diff(color1, color2):
-    """
-    Uses 1-norm distance to calculate difference between two values.
-    """
-    if isinstance(color2, tuple):
-        return sum([abs(color1[i]-color2[i]) for i in range(0, len(color2))])
+                        if p == background:
+                            pixel[s, t] = value
+                            newedge.append((s, t))
+            edge = newedge
     else:
-        return abs(color1-color2)
+        while edge:
+            newedge = []
+            for (x, y) in edge:
+                for (s, t) in ((x+1, y), (x-1, y), (x, y+1), (x, y-1)):
+                    try:
+                        p = pixel[s, t]
+                    except IndexError:
+                        pass
+                    else:
+                        if p != value and p != border:
+                            pixel[s, t] = value
+                            newedge.append((s, t))
+            edge = newedge

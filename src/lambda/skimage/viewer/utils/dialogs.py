@@ -1,6 +1,6 @@
 import os
 
-from ..qt import QtWidgets
+from ..qt import QtGui
 
 
 __all__ = ['open_file_dialog', 'save_file_dialog']
@@ -17,18 +17,18 @@ def _format_filename(filename):
 
 def open_file_dialog():
     """Return user-selected file path."""
-    filename = QtWidgets.QFileDialog.getOpenFileName()
+    filename = QtGui.QFileDialog.getOpenFileName()
     filename = _format_filename(filename)
     return filename
 
 
 def save_file_dialog(default_format='png'):
     """Return user-selected file path."""
-    filename = QtWidgets.QFileDialog.getSaveFileName()
+    filename = QtGui.QFileDialog.getSaveFileName()
     filename = _format_filename(filename)
     if filename is None:
         return None
-    # TODO: io plugins should assign default image formats
+    #TODO: io plugins should assign default image formats
     basename, ext = os.path.splitext(filename)
     if not ext:
         filename = '%s.%s' % (filename, default_format)

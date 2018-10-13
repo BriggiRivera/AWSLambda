@@ -1,7 +1,7 @@
 """
 Pure SciPy implementation of Locally Optimal Block Preconditioned Conjugate
 Gradient Method (LOBPCG), see
-https://bitbucket.org/joseroman/blopex
+http://www-math.cudenver.edu/~aknyazev/software/BLOPEX/
 
 License: BSD
 
@@ -23,6 +23,11 @@ from scipy.sparse.linalg import aslinearoperator, LinearOperator
 __all__ = ['lobpcg']
 
 
+@np.deprecate(new_name='eigh')
+def symeig(mtxA, mtxB=None, select=None):
+    return eigh(mtxA, b=mtxB, eigvals=select)
+
+
 def pause():
     # Used only when verbosity level > 10.
     input()
@@ -35,7 +40,7 @@ def save(ar, fileName):
 
 
 def _assert_symmetric(M, rtol=1e-5, atol=1e-8):
-    assert_allclose(M.T.conj(), M, rtol=rtol, atol=atol)
+    assert_allclose(M.T, M, rtol=rtol, atol=atol)
 
 
 ##
@@ -81,7 +86,7 @@ def _makeOperator(operatorInput, expectedShape):
 
 def _applyConstraints(blockVectorV, factYBY, blockVectorBY, blockVectorY):
     """Changes blockVectorV in place."""
-    gramYBV = np.dot(blockVectorBY.T.conj(), blockVectorV)
+    gramYBV = np.dot(blockVectorBY.T, blockVectorV)
     tmp = cho_solve(factYBY, gramYBV)
     blockVectorV -= np.dot(blockVectorY, tmp)
 
@@ -92,7 +97,7 @@ def _b_orthonormalize(B, blockVectorV, blockVectorBV=None, retInvR=False):
             blockVectorBV = B(blockVectorV)
         else:
             blockVectorBV = blockVectorV  # Shared data!!!
-    gramVBV = np.dot(blockVectorV.T.conj(), blockVectorBV)
+    gramVBV = np.dot(blockVectorV.T, blockVectorBV)
     gramVBV = cholesky(gramVBV)
     gramVBV = inv(gramVBV, overwrite_a=True)
     # gramVBV is now R^{-1}.
@@ -174,7 +179,7 @@ def lobpcg(A, X,
     array([[   1.,    0.,    0., ...,    0.,    0.,    0.],
            [   0.,    2.,    0., ...,    0.,    0.,    0.],
            [   0.,    0.,    3., ...,    0.,    0.,    0.],
-           ...,
+           ..., 
            [   0.,    0.,    0., ...,   98.,    0.,    0.],
            [   0.,    0.,    0., ...,    0.,   99.,    0.],
            [   0.,    0.,    0., ...,    0.,    0.,  100.]])
@@ -261,7 +266,7 @@ def lobpcg(A, X,
            in hypre and PETSc.  http://arxiv.org/abs/0705.2626
 
     .. [3] A. V. Knyazev's C and MATLAB implementations:
-           https://bitbucket.org/joseroman/blopex
+           http://www-math.cudenver.edu/~aknyazev/software/BLOPEX/
 
     """
     blockVectorX = X
@@ -340,7 +345,7 @@ def lobpcg(A, X,
             blockVectorBY = blockVectorY
 
         # gramYBY is a dense array.
-        gramYBY = np.dot(blockVectorY.T.conj(), blockVectorBY)
+        gramYBY = np.dot(blockVectorY.T, blockVectorBY)
         try:
             # gramYBY is a Cholesky factor from now on...
             gramYBY = cho_factor(gramYBY)
@@ -356,7 +361,7 @@ def lobpcg(A, X,
     ##
     # Compute the initial Ritz vectors: solve the eigenproblem.
     blockVectorAX = A(blockVectorX)
-    gramXAX = np.dot(blockVectorX.T.conj(), blockVectorAX)
+    gramXAX = np.dot(blockVectorX.T, blockVectorAX)
 
     _lambda, eigBlockVector = eigh(gramXAX, check_finite=False)
     ii = np.argsort(_lambda)[:sizeX]
@@ -455,29 +460,29 @@ def lobpcg(A, X,
         # Perform the Rayleigh Ritz Procedure:
         # Compute symmetric Gram matrices:
 
-        xaw = np.dot(blockVectorX.T.conj(), activeBlockVectorAR)
-        waw = np.dot(activeBlockVectorR.T.conj(), activeBlockVectorAR)
-        xbw = np.dot(blockVectorX.T.conj(), activeBlockVectorBR)
+        xaw = np.dot(blockVectorX.T, activeBlockVectorAR)
+        waw = np.dot(activeBlockVectorR.T, activeBlockVectorAR)
+        xbw = np.dot(blockVectorX.T, activeBlockVectorBR)
 
         if iterationNumber > 0:
-            xap = np.dot(blockVectorX.T.conj(), activeBlockVectorAP)
-            wap = np.dot(activeBlockVectorR.T.conj(), activeBlockVectorAP)
-            pap = np.dot(activeBlockVectorP.T.conj(), activeBlockVectorAP)
-            xbp = np.dot(blockVectorX.T.conj(), activeBlockVectorBP)
-            wbp = np.dot(activeBlockVectorR.T.conj(), activeBlockVectorBP)
+            xap = np.dot(blockVectorX.T, activeBlockVectorAP)
+            wap = np.dot(activeBlockVectorR.T, activeBlockVectorAP)
+            pap = np.dot(activeBlockVectorP.T, activeBlockVectorAP)
+            xbp = np.dot(blockVectorX.T, activeBlockVectorBP)
+            wbp = np.dot(activeBlockVectorR.T, activeBlockVectorBP)
 
             gramA = np.bmat([[np.diag(_lambda), xaw, xap],
-                              [xaw.T.conj(), waw, wap],
-                              [xap.T.conj(), wap.T.conj(), pap]])
+                              [xaw.T, waw, wap],
+                              [xap.T, wap.T, pap]])
 
             gramB = np.bmat([[ident0, xbw, xbp],
-                              [xbw.T.conj(), ident, wbp],
-                              [xbp.T.conj(), wbp.T.conj(), ident]])
+                              [xbw.T, ident, wbp],
+                              [xbp.T, wbp.T, ident]])
         else:
             gramA = np.bmat([[np.diag(_lambda), xaw],
-                              [xaw.T.conj(), waw]])
+                              [xaw.T, waw]])
             gramB = np.bmat([[ident0, xbw],
-                              [xbw.T.conj(), ident]])
+                              [xbw.T, ident]])
 
         _assert_symmetric(gramA)
         _assert_symmetric(gramB)
@@ -494,8 +499,8 @@ def lobpcg(A, X,
         if verbosityLevel > 10:
             print(ii)
 
-        _lambda = _lambda[ii]
-        eigBlockVector = eigBlockVector[:,ii]
+        _lambda = _lambda[ii].astype(np.float64)
+        eigBlockVector = np.asarray(eigBlockVector[:,ii].astype(np.float64))
 
         lambdaHistory.append(_lambda)
 

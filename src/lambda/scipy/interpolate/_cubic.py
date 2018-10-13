@@ -82,9 +82,9 @@ class PchipInterpolator(BPoly):
     ----------
     .. [1] F. N. Fritsch and R. E. Carlson, Monotone Piecewise Cubic Interpolation,
            SIAM J. Numer. Anal., 17(2), 238 (1980).
-           :doi:`10.1137/0717021`.
+           DOI:10.1137/0717021
     .. [2] see, e.g., C. Moler, Numerical Computing with Matlab, 2004.
-           :doi:`10.1137/1.9780898717952`
+           DOI: http://dx.doi.org/10.1137/1.9780898717952
 
 
     """

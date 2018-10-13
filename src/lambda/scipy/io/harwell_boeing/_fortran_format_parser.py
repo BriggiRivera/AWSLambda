@@ -203,8 +203,9 @@ class Tokenizer(object):
                 else:
                     self.curpos = m.end()
                     return Token(self.tokens[i], m.group(), self.curpos)
-            raise SyntaxError("Unknown character at position %d (%s)"
-                              % (self.curpos, self.data[curpos]))
+            else:
+                raise SyntaxError("Unknown character at position %d (%s)"
+                                  % (self.curpos, self.data[curpos]))
 
 
 # Grammar for fortran format:

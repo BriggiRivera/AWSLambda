@@ -17,12 +17,16 @@
 
 from __future__ import print_function
 
-from . import Image, ImageFile
-from ._binary import i8, i16be as i16, i32be as i32, o8
+from PIL import Image, ImageFile, _binary
 import os
 import tempfile
 
 __version__ = "0.3"
+
+i8 = _binary.i8
+i16 = _binary.i16be
+i32 = _binary.i32be
+o8 = _binary.o8
 
 COMPRESSION = {
     1: "raw",
@@ -95,13 +99,15 @@ class IptcImageFile(ImageFile.ImageFile):
                 tagdata = self.fp.read(size)
             else:
                 tagdata = None
-            if tag in self.info:
+            if tag in list(self.info.keys()):
                 if isinstance(self.info[tag], list):
                     self.info[tag].append(tagdata)
                 else:
                     self.info[tag] = [self.info[tag], tagdata]
             else:
                 self.info[tag] = tagdata
+
+            # print(tag, self.info[tag])
 
         # mode
         layers = i8(self.info[(3, 60)][0])
@@ -118,7 +124,7 @@ class IptcImageFile(ImageFile.ImageFile):
             self.mode = "CMYK"[id]
 
         # size
-        self._size = self.getint((3, 20)), self.getint((3, 30))
+        self.size = self.getint((3, 20)), self.getint((3, 30))
 
         # compression
         try:
@@ -185,7 +191,7 @@ def getiptcinfo(im):
     :returns: A dictionary containing IPTC information, or None if
         no IPTC information block was found.
     """
-    from . import TiffImagePlugin, JpegImagePlugin
+    from PIL import TiffImagePlugin, JpegImagePlugin
     import io
 
     data = None

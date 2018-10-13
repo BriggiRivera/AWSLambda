@@ -20,7 +20,7 @@
 #
 
 import re
-from . import Image, ImageFile
+from PIL import Image, ImageFile
 
 __version__ = "0.6"
 
@@ -63,7 +63,7 @@ class XbmImageFile(ImageFile.ImageFile):
                     )
 
             self.mode = "1"
-            self._size = xsize, ysize
+            self.size = xsize, ysize
 
             self.tile = [("xbm", (0, 0)+self.size, m.end(), None)]
 

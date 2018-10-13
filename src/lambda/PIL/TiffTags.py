@@ -23,8 +23,7 @@ from collections import namedtuple
 class TagInfo(namedtuple("_TagInfo", "value name type length enum")):
     __slots__ = []
 
-    def __new__(cls, value=None, name="unknown",
-                type=None, length=None, enum=None):
+    def __new__(cls, value=None, name="unknown", type=None, length=0, enum=None):
         return super(TagInfo, cls).__new__(
             cls, value, name, type, length, enum or {})
 
@@ -73,8 +72,8 @@ TAGS_V2 = {
     257: ("ImageLength", LONG, 1),
     258: ("BitsPerSample", SHORT, 0),
     259: ("Compression", SHORT, 1,
-          {"Uncompressed": 1, "CCITT 1d": 2, "Group 3 Fax": 3,
-           "Group 4 Fax": 4, "LZW": 5, "JPEG": 6, "PackBits": 32773}),
+          {"Uncompressed": 1, "CCITT 1d": 2, "Group 3 Fax": 3, "Group 4 Fax": 4,
+           "LZW": 5, "JPEG": 6, "PackBits": 32773}),
 
     262: ("PhotometricInterpretation", SHORT, 1,
           {"WhiteIsZero": 0, "BlackIsZero": 1, "RGB": 2, "RGB Palette": 3,
@@ -122,7 +121,7 @@ TAGS_V2 = {
     316: ("HostComputer", ASCII, 1),
     317: ("Predictor", SHORT, 1, {"none": 1, "Horizontal Differencing": 2}),
     318: ("WhitePoint", RATIONAL, 2),
-    319: ("PrimaryChromaticities", RATIONAL, 6),
+    319: ("PrimaryChromaticities", SHORT, 6),
 
     320: ("ColorMap", SHORT, 0),
     321: ("HalftoneHints", SHORT, 2),
@@ -143,8 +142,6 @@ TAGS_V2 = {
     341: ("SMaxSampleValue", DOUBLE, 0),
     342: ("TransferRange", SHORT, 6),
 
-    347: ("JPEGTables", UNDEFINED, 1),
-
     # obsolete JPEG tags
     512: ("JPEGProc", SHORT, 1),
     513: ("JPEGInterchangeFormat", LONG, 1),
@@ -159,12 +156,9 @@ TAGS_V2 = {
     529: ("YCbCrCoefficients", RATIONAL, 3),
     530: ("YCbCrSubSampling", SHORT, 2),
     531: ("YCbCrPositioning", SHORT, 1),
-    532: ("ReferenceBlackWhite", RATIONAL, 6),
-
-    700: ('XMP', BYTE, 1),
+    532: ("ReferenceBlackWhite", LONG, 0),
 
     33432: ("Copyright", ASCII, 1),
-    34377: ('PhotoshopInfo', BYTE, 1),
 
     # FIXME add more tags here
     34665: ("ExifIFD", SHORT, 1),
@@ -194,8 +188,8 @@ TAGS_V2 = {
 
     50741: ("MakerNoteSafety", SHORT, 1, {"Unsafe": 0, "Safe": 1}),
     50780: ("BestQualityScale", RATIONAL, 1),
-    50838: ("ImageJMetaDataByteCounts", LONG, 0),  # Can be more than one
-    50839: ("ImageJMetaData", UNDEFINED, 1)        # see Issue #2006
+    50838: ("ImageJMetaDataByteCounts", LONG, 1),
+    50839: ("ImageJMetaData", UNDEFINED, 1)
 }
 
 # Legacy Tags structure
@@ -356,7 +350,6 @@ def _populate():
 
         TAGS_V2[k] = TagInfo(k, *v)
 
-
 _populate()
 ##
 # Map type numbers to type names -- defined in ImageFileDirectory.
@@ -384,44 +377,44 @@ TYPES = {}
 # adding to the custom dictionary. From tif_dir.c, searching for
 # case TIFFTAG in the _TIFFVSetField function:
 # Line: item.
-# 148: case TIFFTAG_SUBFILETYPE:
-# 151: case TIFFTAG_IMAGEWIDTH:
-# 154: case TIFFTAG_IMAGELENGTH:
-# 157: case TIFFTAG_BITSPERSAMPLE:
-# 181: case TIFFTAG_COMPRESSION:
-# 202: case TIFFTAG_PHOTOMETRIC:
-# 205: case TIFFTAG_THRESHHOLDING:
-# 208: case TIFFTAG_FILLORDER:
-# 214: case TIFFTAG_ORIENTATION:
-# 221: case TIFFTAG_SAMPLESPERPIXEL:
-# 228: case TIFFTAG_ROWSPERSTRIP:
-# 238: case TIFFTAG_MINSAMPLEVALUE:
-# 241: case TIFFTAG_MAXSAMPLEVALUE:
-# 244: case TIFFTAG_SMINSAMPLEVALUE:
-# 247: case TIFFTAG_SMAXSAMPLEVALUE:
-# 250: case TIFFTAG_XRESOLUTION:
-# 256: case TIFFTAG_YRESOLUTION:
-# 262: case TIFFTAG_PLANARCONFIG:
-# 268: case TIFFTAG_XPOSITION:
-# 271: case TIFFTAG_YPOSITION:
-# 274: case TIFFTAG_RESOLUTIONUNIT:
-# 280: case TIFFTAG_PAGENUMBER:
-# 284: case TIFFTAG_HALFTONEHINTS:
-# 288: case TIFFTAG_COLORMAP:
-# 294: case TIFFTAG_EXTRASAMPLES:
-# 298: case TIFFTAG_MATTEING:
-# 305: case TIFFTAG_TILEWIDTH:
-# 316: case TIFFTAG_TILELENGTH:
-# 327: case TIFFTAG_TILEDEPTH:
-# 333: case TIFFTAG_DATATYPE:
-# 344: case TIFFTAG_SAMPLEFORMAT:
-# 361: case TIFFTAG_IMAGEDEPTH:
-# 364: case TIFFTAG_SUBIFD:
-# 376: case TIFFTAG_YCBCRPOSITIONING:
-# 379: case TIFFTAG_YCBCRSUBSAMPLING:
-# 383: case TIFFTAG_TRANSFERFUNCTION:
-# 389: case TIFFTAG_REFERENCEBLACKWHITE:
-# 393: case TIFFTAG_INKNAMES:
+# 148:	case TIFFTAG_SUBFILETYPE:
+# 151:	case TIFFTAG_IMAGEWIDTH:
+# 154:	case TIFFTAG_IMAGELENGTH:
+# 157:	case TIFFTAG_BITSPERSAMPLE:
+# 181:	case TIFFTAG_COMPRESSION:
+# 202:	case TIFFTAG_PHOTOMETRIC:
+# 205:	case TIFFTAG_THRESHHOLDING:
+# 208:	case TIFFTAG_FILLORDER:
+# 214:	case TIFFTAG_ORIENTATION:
+# 221:	case TIFFTAG_SAMPLESPERPIXEL:
+# 228:	case TIFFTAG_ROWSPERSTRIP:
+# 238:	case TIFFTAG_MINSAMPLEVALUE:
+# 241:	case TIFFTAG_MAXSAMPLEVALUE:
+# 244:	case TIFFTAG_SMINSAMPLEVALUE:
+# 247:	case TIFFTAG_SMAXSAMPLEVALUE:
+# 250:	case TIFFTAG_XRESOLUTION:
+# 256:	case TIFFTAG_YRESOLUTION:
+# 262:	case TIFFTAG_PLANARCONFIG:
+# 268:	case TIFFTAG_XPOSITION:
+# 271:	case TIFFTAG_YPOSITION:
+# 274:	case TIFFTAG_RESOLUTIONUNIT:
+# 280:	case TIFFTAG_PAGENUMBER:
+# 284:	case TIFFTAG_HALFTONEHINTS:
+# 288:	case TIFFTAG_COLORMAP:
+# 294:	case TIFFTAG_EXTRASAMPLES:
+# 298:	case TIFFTAG_MATTEING:
+# 305:	case TIFFTAG_TILEWIDTH:
+# 316:	case TIFFTAG_TILELENGTH:
+# 327:	case TIFFTAG_TILEDEPTH:
+# 333:	case TIFFTAG_DATATYPE:
+# 344:	case TIFFTAG_SAMPLEFORMAT:
+# 361:	case TIFFTAG_IMAGEDEPTH:
+# 364:	case TIFFTAG_SUBIFD:
+# 376:	case TIFFTAG_YCBCRPOSITIONING:
+# 379:	case TIFFTAG_YCBCRSUBSAMPLING:
+# 383:	case TIFFTAG_TRANSFERFUNCTION:
+# 389:	case TIFFTAG_REFERENCEBLACKWHITE:
+# 393:	case TIFFTAG_INKNAMES:
 
 # some of these are not in our TAGS_V2 dict and were included from tiff.h
 
@@ -438,7 +431,7 @@ LIBTIFF_CORE.remove(301)  # Array of short, crashes
 LIBTIFF_CORE.remove(532)  # Array of long, crashes
 
 LIBTIFF_CORE.remove(255)  # We don't have support for subfiletypes
-LIBTIFF_CORE.remove(322)  # We don't have support for writing tiled images with libtiff
+LIBTIFF_CORE.remove(322)  # We don't have support for tiled images in libtiff
 LIBTIFF_CORE.remove(323)  # Tiled images
 LIBTIFF_CORE.remove(333)  # Ink Names either
 
