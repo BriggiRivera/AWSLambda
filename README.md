@@ -3,7 +3,7 @@
 $ pip install boto3
 
 ### Usar los siguientes folders segun el sistema operativo que se este usando:
-- Windows: C:\Users\ (TU USUARIO) \.aws
+- Windows: C:\Users\ (TU USUARIO) \ .aws
 - Linux: ~/.aws/
 - Mac: ~/.aws/
 
